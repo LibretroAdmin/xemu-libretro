@@ -1,0 +1,7 @@
+#define XEMU_VERSION       "0.0.0"
+#define XEMU_VERSION_MAJOR 0
+#define XEMU_VERSION_MINOR 0
+#define XEMU_VERSION_PATCH 0
+#define XEMU_VERSION_COMMIT 0
+#define XEMU_COMMIT        "e677e7e6f2750e7ba6ea328421b5fa69a76c2407"
+#define XEMU_DATE          "Fri Jul  3 19:22:25 UTC 2026"
