@@ -487,6 +487,12 @@ void xemu_input_update_controller(ControllerState *state)
         return;
     }
 
+    if (state->type == INPUT_DEVICE_LIBRETRO) {
+        /* Button/axis state is written directly by the libretro frontend
+         * shim each retro_run(); nothing to poll here. */
+        return;
+    }
+
     if (state->type == INPUT_DEVICE_SDL_KEYBOARD) {
         xemu_input_update_sdl_kbd_controller_state(state);
     } else if (state->type == INPUT_DEVICE_SDL_GAMEPAD) {
