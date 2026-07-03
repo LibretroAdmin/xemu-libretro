@@ -4081,10 +4081,6 @@ $(B)/libsystem.a.p/ui_xemu-snapshots.c.obj: $(S)/ui/xemu-snapshots.c
 	@mkdir -p $(@D)
 	$(E) "CC      $(notdir $@)"
 	$(Q)$(CC) $(FS_42) -c -o $@ $<
-$(B)/libsystem.a.p/ui_xemu-thumbnail.cc.obj: $(S)/ui/xemu-thumbnail.cc
-	@mkdir -p $(@D)
-	$(E) "CC      $(notdir $@)"
-	$(Q)$(CXX) $(FS_43) -c -o $@ $<
 $(B)/libsystem.a.p/ui_xemu-widescreen.c.obj: $(S)/ui/xemu-widescreen.c
 	@mkdir -p $(@D)
 	$(E) "CC      $(notdir $@)"
@@ -9136,7 +9132,6 @@ LINK_OBJS := \
   $(B)/libsystem.a.p/ui_xemu-controllers.cc.obj \
   $(B)/libsystem.a.p/ui_xemu-data.c.obj \
   $(B)/libsystem.a.p/ui_xemu-snapshots.c.obj \
-  $(B)/libsystem.a.p/ui_xemu-thumbnail.cc.obj \
   $(B)/libsystem.a.p/ui_xemu-widescreen.c.obj \
   $(B)/libsystem.a.p/ui_xemu-os-utils-windows.c.obj \
   $(B)/libsystem.a.p/ui_console-vc-stubs.c.obj \

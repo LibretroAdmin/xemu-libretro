@@ -29,7 +29,6 @@ xemu_ss.add(files(
 
   'xemu-data.c',
   'xemu-snapshots.c',
-  'xemu-thumbnail.cc',
   'xemu-widescreen.c',
 ))
 
@@ -38,8 +37,9 @@ if not get_option('libretro')
   # registration for the standalone build. In libretro mode these duties
   # move to ui/xemu-libretro-glue.c, which is compiled as part of the
   # shared module (see top-level meson.build) so that its type_init
-  # constructor replaces this one.
-  xemu_ss.add(files('xemu.c'))
+  # constructor replaces this one. xemu-thumbnail.cc renders snapshot
+  # thumbnails through the HUD's GL helpers, so it is HUD-only too.
+  xemu_ss.add(files('xemu.c', 'xemu-thumbnail.cc'))
 endif
 
 if host_os == 'windows'

@@ -9,7 +9,7 @@
  *   2. A hidden SDL window + GL 4.0 core context so the NV2A renderer can
  *      run headless inside a libretro frontend (nv2a_context_init() derives
  *      its shared contexts from this one, same as upstream).
- *   3. Stubs for the ImGui HUD layer (ui/xui/*), which is excluded from the
+ *   3. Stubs for the ImGui HUD layer (ui/xui), which is excluded from the
  *      libretro build — the frontend owns the UI.
  *
  * Target: x64 Windows first; the code itself is platform-neutral.
@@ -229,7 +229,7 @@ static void register_xemu_lr_display(void)
 type_init(register_xemu_lr_display);
 
 /* ===================================================================== */
-/* Stubs for the excluded ImGui HUD layer (ui/xui/*)                      */
+/* Stubs for the excluded ImGui HUD layer (ui/xui)                      */
 /* Extend this section as the linker demands.                             */
 /* ===================================================================== */
 #ifdef XEMU_LR_STUB_XUI
@@ -242,6 +242,24 @@ void xemu_queue_notification(const char *msg)
 void xemu_queue_error_message(const char *msg)
 {
     fprintf(stderr, "[xemu] ERROR: %s\n", msg ? msg : "");
+}
+
+/* ui/xemu-thumbnail.cc is HUD-only (it renders through xui GL helpers).
+ * Snapshot save/load still works; thumbnails are simply absent. */
+bool xemu_snapshots_load_png_to_texture(GLuint tex, void *buf, size_t size);
+bool xemu_snapshots_load_png_to_texture(GLuint tex, void *buf, size_t size)
+{
+    (void)tex; (void)buf; (void)size;
+    return false;
+}
+
+void *xemu_snapshots_create_framebuffer_thumbnail_png(size_t *size);
+void *xemu_snapshots_create_framebuffer_thumbnail_png(size_t *size)
+{
+    if (size) {
+        *size = 0;
+    }
+    return NULL;
 }
 
 #endif /* XEMU_LR_STUB_XUI */
