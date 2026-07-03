@@ -49,6 +49,8 @@ option('docs', type : 'feature', value : 'auto',
        description: 'Documentations build support')
 option('fuzzing', type : 'boolean', value: false,
        description: 'build fuzzing targets')
+option('libretro', type : 'boolean', value: false,
+       description: 'build xemu as a libretro core (shared module) instead of the standalone executable')
 option('gettext', type : 'feature', value : 'auto',
        description: 'Localization of the GTK+ user interface')
 option('modules', type : 'feature', value : 'disabled',

@@ -4615,6 +4615,27 @@ foreach target : target_dirs
                  build_by_default: false)
 
   if target.endswith('-softmmu')
+    if get_option('libretro')
+      # Build the libretro core instead of the standalone executables.
+      # The core links every object of the per-target static library
+      # (constructor-based module/type registration requires all of them)
+      # plus the libretro shim sources. ui/meson.build has already swapped
+      # ui/xemu.c and the ImGui HUD out of the source set in this mode.
+      execs = []
+      libretro_inc = [target_inc, include_directories('libretro')]
+      libretro_core = shared_module('xemu_libretro',
+                 files('ui/xemu-libretro.c', 'ui/xemu-libretro-glue.c'),
+                 name_prefix: '',
+                 install: true,
+                 c_args: c_args + ['-DXEMU_LIBRETRO', '-DXEMU_LR_STUB_XUI'],
+                 dependencies: arch_deps + [sdl, opengl],
+                 objects: lib.extract_all_objects(recursive: true),
+                 include_directories: libretro_inc,
+                 link_depends: [block_syms, qemu_syms],
+                 link_args: link_args,
+                 vs_module_defs: meson.current_source_dir() / 'libretro/xemu_libretro.def')
+      emulators += {'xemu_libretro': libretro_core}
+    else
     execs = [{
       'name': 'qemu-system-' + target_name,
       'win_subsystem': 'console',
@@ -4638,6 +4659,7 @@ foreach target : target_dirs
         'dependencies': specific_fuzz.dependencies(),
       }]
     endif
+    endif # libretro
   else
     execs = [{
       'name': 'qemu-' + target_name,

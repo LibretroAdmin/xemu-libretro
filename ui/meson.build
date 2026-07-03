@@ -27,18 +27,31 @@ xemu_ss.add(files(
   'xemu-settings.cc',
   'xemu-controllers.cc',
 
-  'xemu.c',
   'xemu-data.c',
   'xemu-snapshots.c',
   'xemu-thumbnail.cc',
   'xemu-widescreen.c',
 ))
 
+if not get_option('libretro')
+  # ui/xemu.c owns main(), the SDL window and the DISPLAY_TYPE_XEMU
+  # registration for the standalone build. In libretro mode these duties
+  # move to ui/xemu-libretro-glue.c, which is compiled as part of the
+  # shared module (see top-level meson.build) so that its type_init
+  # constructor replaces this one.
+  xemu_ss.add(files('xemu.c'))
+endif
+
 if host_os == 'windows'
   xemu_ss.add(nvapi)
 endif
 
-subdir('xui')
+if not get_option('libretro')
+  # The ImGui HUD is not built for libretro cores; the frontend owns the
+  # UI. Its notification API (the only symbols consumed outside ui/xui/)
+  # is stubbed in ui/xemu-libretro-glue.c.
+  subdir('xui')
+endif
 
 if host_os == 'darwin'
   xemu_cocoa = dependency('appleframeworks', modules: 'Cocoa')
