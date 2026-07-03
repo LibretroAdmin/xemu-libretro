@@ -26,7 +26,6 @@ CC      := $(CROSS_PREFIX)gcc
 CXX     := $(CROSS_PREFIX)g++
 AR      := $(CROSS_PREFIX)ar
 WINDRES := $(CROSS_PREFIX)windres
-PKGCONF ?= pkg-config
 
 # --- platform ----------------------------------------------------------------
 ifeq ($(platform),)
@@ -52,13 +51,25 @@ else
    E := @echo
 endif
 
-# --- dependency flags (the only external tool used besides the compiler) -----
-DEP_PKGS   := sdl3 glib-2.0 gmodule-2.0 pixman-1 epoxy zlib slirp samplerate libpng
-DEP_CFLAGS  := $(shell $(PKGCONF) --cflags $(DEP_PKGS) 2>/dev/null)
-DEP_LDFLAGS := $(shell $(PKGCONF) --libs-only-L $(DEP_PKGS) 2>/dev/null)
-# net/capture_win_ifnames.c needs iphlpapi; upstream resolves it through
-# the winpcap loader path, the static link needs it spelled out.
-EXTRA_LIBS  ?= -liphlpapi
+# --- dependencies: fully vendored, fully static --------------------------------
+# All third-party libraries (glib, SDL3, epoxy, slirp, samplerate, zlib,
+# and glib's own deps intl/iconv/pcre2) live as static archives and
+# headers under libretro/deps/win64. Nothing is looked up on the system:
+# no pkg-config, no pacman dev packages, and the resulting core imports
+# only Windows system DLLs.
+DEPS := $(S)/libretro/deps/win64
+DEP_CFLAGS  := -I$(DEPS)/include \
+               -I$(DEPS)/include/glib-2.0 \
+               -I$(DEPS)/lib/glib-2.0/include \
+               -I$(DEPS)/include/slirp \
+               -DGLIB_STATIC_COMPILATION -DPCRE2_STATIC -DLIBSLIRP_STATIC
+DEP_LDFLAGS := -L$(DEPS)/lib
+# Transitive static-link requirements:
+#   glib   -> intl, iconv, pcre2-8, ws2_32, ole32, shlwapi, uuid
+#   SDL3   -> setupapi, imm32, version, winmm, cfgmgr32, oleaut32
+#   slirp  -> iphlpapi (also needed by net/capture_win_ifnames.c)
+EXTRA_LIBS  ?= -lintl -liconv -lpcre2-8 -liphlpapi -lsetupapi -limm32 \
+               -lversion -lcfgmgr32 -lshlwapi
 
 all: $(TARGET)
 
@@ -86,7 +97,7 @@ $(TARGET): $(LINK_OBJS) $(LINK_ARCHIVES)
 	$(E) "RSP     $(notdir $(RSP))"
 	$(file >$(RSP),$(LINK_OBJS) $(DEP_LDFLAGS) $(LINK_TAIL) $(EXTRA_LIBS))
 	$(E) "LINK    $@"
-	$(Q)cd $(B) && $(CXX) -m64 -o $(S)/$@ @$(RSP)
+	$(Q)cd $(B) && $(CXX) -m64 -static-libgcc -static-libstdc++ -o $(S)/$@ @$(RSP)
 	$(E) "OK      $@"
 
 clean:
