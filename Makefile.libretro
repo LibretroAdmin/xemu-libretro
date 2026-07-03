@@ -1,74 +1,87 @@
 # =============================================================================
-# xemu libretro core - static Makefile (libretro-style entry point)
-# Primary target: x64 Windows (MinGW-w64 / MSYS2 UCRT64)
+# xemu libretro core - static Makefile
+# Primary target: x64 Windows (MSYS2 MINGW64 / MinGW-w64)
 #
-# The core is a first-class meson target in this tree (-Dlibretro=true); this
-# Makefile is the conventional static libretro entry point that drives it and
-# drops the finished core next to itself. Run from the repo root:
+# Pure GNU make + gcc build: NO meson, NO ninja, NO python required.
 #
-#   make -f Makefile.libretro            # build xemu_libretro.dll (win64)
-#   make -f Makefile.libretro DEBUG=1
-#   make -f Makefile.libretro clean
+# The build graph was extracted once from a configured meson tree by
+# scripts/libretro-gen-mk.py into libretro/mk/sources_win64.mk (per-object
+# compile rules, flag sets, archive layout, exact link line). All
+# meson/QAPI/trace-generated sources and headers are committed under
+# libretro/pregen/ and seeded into the build directory on first run.
 #
-# Buildbot-style variables (platform, TARGET_NAME, DEBUG, JOBS) follow the
-# usual libretro conventions.
+#   make -f Makefile.libretro -j$(nproc)
+#
+# Variables: DEBUG=1, B=<builddir>, CROSS_PREFIX=x86_64-w64-mingw32-
 # =============================================================================
 
-CORE        := xemu
-TARGET_NAME := $(CORE)
-DEBUG       ?= 0
-JOBS        ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-BUILD_DIR   ?= build-libretro
-NINJA       ?= ninja
-MESON       ?= meson
+CORE   := xemu
+S      := $(abspath .)
+B      ?= $(S)/build-libretro
+PREGEN := $(S)/libretro/pregen
 
-# --- platform autodetect -----------------------------------------------------
+CROSS_PREFIX ?=
+CC      := $(CROSS_PREFIX)gcc
+CXX     := $(CROSS_PREFIX)g++
+AR      := $(CROSS_PREFIX)ar
+WINDRES := $(CROSS_PREFIX)windres
+PKGCONF ?= pkg-config
+
+# --- platform ----------------------------------------------------------------
 ifeq ($(platform),)
    platform = unix
    ifneq ($(findstring MINGW,$(shell uname -s)),)
       platform = win64
    else ifneq ($(findstring MSYS,$(shell uname -s)),)
       platform = win64
-   else ifneq ($(findstring Darwin,$(shell uname -s)),)
-      platform = osx
    endif
 endif
 
-# ---- PRIMARY TARGET: x64 Windows (MSYS2 UCRT64) ----
 ifeq ($(platform), win64)
-   TARGET := $(TARGET_NAME)_libretro.dll
-else ifeq ($(platform), osx)
-   TARGET := $(TARGET_NAME)_libretro.dylib
+   TARGET := $(CORE)_libretro.dll
 else
-   TARGET := $(TARGET_NAME)_libretro.so
+   $(error Only the win64 platform is wired up so far; see libretro/README.md)
 endif
 
-ifeq ($(DEBUG), 1)
-   BUILDTYPE := debug
+ifeq ($(V),1)
+   Q :=
+   E := @true
 else
-   BUILDTYPE := debugoptimized
+   Q := @
+   E := @echo
 endif
 
-MESON_FLAGS := -Dlibretro=true \
-               -Dbuildtype=$(BUILDTYPE) \
-               -Ddefault_library=static \
-               --prefer-static
+# --- dependency flags (the only external tool used besides the compiler) -----
+DEP_PKGS   := sdl3 glib-2.0 gmodule-2.0 pixman-1 epoxy zlib slirp samplerate libpng
+DEP_CFLAGS := $(shell $(PKGCONF) --cflags $(DEP_PKGS) 2>/dev/null)
 
 all: $(TARGET)
 
-$(BUILD_DIR)/build.ninja:
-	$(MESON) setup $(BUILD_DIR) $(MESON_FLAGS)
+# --- seed the build tree with pregenerated sources/headers ---------------------
+$(B)/.pregen.stamp:
+	@mkdir -p $(B)
+	$(E) "SEED    $(B) (pregenerated sources)"
+	$(Q)cp -r $(PREGEN)/. $(B)/
+	$(Q)touch $@
 
-$(TARGET): $(BUILD_DIR)/build.ninja
-	$(NINJA) -C $(BUILD_DIR) -j $(JOBS) $(TARGET_NAME)_libretro
-	@cp -v $$(find $(BUILD_DIR) -name '$(TARGET)' | head -n1) .
-	@echo ">> $(TARGET) ready"
+# every compile rule in the manifest depends on the seeded tree
+include $(S)/libretro/mk/sources_win64.mk
+
+$(foreach o,$(LINK_OBJS),$(eval $(o): | $(B)/.pregen.stamp))
+$(foreach a,$(LINK_ARCHIVES),$(eval $(a): | $(B)/.pregen.stamp))
+
+# --- link ----------------------------------------------------------------------
+# The command line exceeds Windows limits; use a response file.
+RSP := $(B)/$(TARGET).rsp
+
+$(TARGET): $(B)/.pregen.stamp $(B)/version.rc_version.o $(LINK_OBJS) $(LINK_ARCHIVES)
+	$(E) "RSP     $(notdir $(RSP))"
+	$(file >$(RSP),$(B)/version.rc_version.o $(LINK_OBJS) $(LINK_TAIL))
+	$(E) "LINK    $@"
+	$(Q)cd $(B) && $(CXX) -m64 -o $(S)/$@ @$(RSP)
+	$(E) "OK      $@"
 
 clean:
-	-$(NINJA) -C $(BUILD_DIR) clean 2>/dev/null || true
-	rm -f $(TARGET)
+	rm -rf $(B) $(TARGET)
 
-distclean:
-	rm -rf $(BUILD_DIR) $(TARGET)
-
-.PHONY: all clean distclean
+.PHONY: all clean

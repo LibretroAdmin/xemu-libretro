@@ -45,6 +45,14 @@ static struct {
     DisplaySurface *surface;
 } lr_con;
 
+/* Declared in ui/xui/xemu-hud.h upstream; the HUD is excluded from
+ * libretro builds so declare the symbols we provide here. */
+void xemu_main_loop_lock(void);
+void xemu_main_loop_unlock(void);
+SDL_Window *xemu_get_window(void);
+void xemu_queue_notification(const char *msg);
+void xemu_queue_error_message(const char *msg);
+
 /* ===================================================================== */
 /* Symbols upstream ui/xemu.c exports for the rest of the tree            */
 /* ===================================================================== */
@@ -61,7 +69,6 @@ void xemu_main_loop_unlock(void)
     qemu_mutex_unlock_main_loop();
 }
 
-SDL_Window *xemu_get_window(void);
 SDL_Window *xemu_get_window(void)
 {
     return m_window;
@@ -183,8 +190,7 @@ static bool lr_gl_check_format(DisplayChangeListener *dcl,
                                pixman_format_code_t format)
 {
     (void)dcl;
-    return format == PIXMAN_BGRX8888 || format == PIXMAN_BGRA8888 ||
-           format == PIXMAN_x8r8g8b8 || format == PIXMAN_a8r8g8b8;
+    return format == PIXMAN_x8r8g8b8 || format == PIXMAN_a8r8g8b8;
 }
 
 static const DisplayChangeListenerOps lr_dcl_ops = {
@@ -228,13 +234,11 @@ type_init(register_xemu_lr_display);
 /* ===================================================================== */
 #ifdef XEMU_LR_STUB_XUI
 
-void xemu_queue_notification(const char *msg);
 void xemu_queue_notification(const char *msg)
 {
     fprintf(stderr, "[xemu] %s\n", msg ? msg : "");
 }
 
-void xemu_queue_error_message(const char *msg);
 void xemu_queue_error_message(const char *msg)
 {
     fprintf(stderr, "[xemu] ERROR: %s\n", msg ? msg : "");
