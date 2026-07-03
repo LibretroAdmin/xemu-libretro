@@ -19,6 +19,7 @@ CORE   := xemu
 S      := $(abspath .)
 B      ?= $(S)/build-libretro
 PREGEN := $(S)/libretro/pregen
+V      := $(S)/libretro/vendor
 
 CROSS_PREFIX ?=
 CC      := $(CROSS_PREFIX)gcc
@@ -53,7 +54,8 @@ endif
 
 # --- dependency flags (the only external tool used besides the compiler) -----
 DEP_PKGS   := sdl3 glib-2.0 gmodule-2.0 pixman-1 epoxy zlib slirp samplerate libpng
-DEP_CFLAGS := $(shell $(PKGCONF) --cflags $(DEP_PKGS) 2>/dev/null)
+DEP_CFLAGS  := $(shell $(PKGCONF) --cflags $(DEP_PKGS) 2>/dev/null)
+DEP_LDFLAGS := $(shell $(PKGCONF) --libs-only-L $(DEP_PKGS) 2>/dev/null)
 
 all: $(TARGET)
 
@@ -61,7 +63,7 @@ all: $(TARGET)
 $(B)/.pregen.stamp:
 	@mkdir -p $(B)
 	$(E) "SEED    $(B) (pregenerated sources)"
-	$(Q)cp -r $(PREGEN)/. $(B)/
+	$(Q)cp -rp $(PREGEN)/. $(B)/
 	$(Q)touch $@
 
 # every compile rule in the manifest depends on the seeded tree
@@ -76,7 +78,7 @@ RSP := $(B)/$(TARGET).rsp
 
 $(TARGET): $(B)/.pregen.stamp $(B)/version.rc_version.o $(LINK_OBJS) $(LINK_ARCHIVES)
 	$(E) "RSP     $(notdir $(RSP))"
-	$(file >$(RSP),$(B)/version.rc_version.o $(LINK_OBJS) $(LINK_TAIL))
+	$(file >$(RSP),$(B)/version.rc_version.o $(LINK_OBJS) $(DEP_LDFLAGS) $(LINK_TAIL))
 	$(E) "LINK    $@"
 	$(Q)cd $(B) && $(CXX) -m64 -o $(S)/$@ @$(RSP)
 	$(E) "OK      $@"
