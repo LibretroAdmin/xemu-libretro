@@ -1,0 +1,74 @@
+# =============================================================================
+# xemu libretro core - static Makefile (libretro-style entry point)
+# Primary target: x64 Windows (MinGW-w64 / MSYS2 UCRT64)
+#
+# The core is a first-class meson target in this tree (-Dlibretro=true); this
+# Makefile is the conventional static libretro entry point that drives it and
+# drops the finished core next to itself. Run from the repo root:
+#
+#   make -f Makefile.libretro            # build xemu_libretro.dll (win64)
+#   make -f Makefile.libretro DEBUG=1
+#   make -f Makefile.libretro clean
+#
+# Buildbot-style variables (platform, TARGET_NAME, DEBUG, JOBS) follow the
+# usual libretro conventions.
+# =============================================================================
+
+CORE        := xemu
+TARGET_NAME := $(CORE)
+DEBUG       ?= 0
+JOBS        ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+BUILD_DIR   ?= build-libretro
+NINJA       ?= ninja
+MESON       ?= meson
+
+# --- platform autodetect -----------------------------------------------------
+ifeq ($(platform),)
+   platform = unix
+   ifneq ($(findstring MINGW,$(shell uname -s)),)
+      platform = win64
+   else ifneq ($(findstring MSYS,$(shell uname -s)),)
+      platform = win64
+   else ifneq ($(findstring Darwin,$(shell uname -s)),)
+      platform = osx
+   endif
+endif
+
+# ---- PRIMARY TARGET: x64 Windows (MSYS2 UCRT64) ----
+ifeq ($(platform), win64)
+   TARGET := $(TARGET_NAME)_libretro.dll
+else ifeq ($(platform), osx)
+   TARGET := $(TARGET_NAME)_libretro.dylib
+else
+   TARGET := $(TARGET_NAME)_libretro.so
+endif
+
+ifeq ($(DEBUG), 1)
+   BUILDTYPE := debug
+else
+   BUILDTYPE := debugoptimized
+endif
+
+MESON_FLAGS := -Dlibretro=true \
+               -Dbuildtype=$(BUILDTYPE) \
+               -Ddefault_library=static \
+               --prefer-static
+
+all: $(TARGET)
+
+$(BUILD_DIR)/build.ninja:
+	$(MESON) setup $(BUILD_DIR) $(MESON_FLAGS)
+
+$(TARGET): $(BUILD_DIR)/build.ninja
+	$(NINJA) -C $(BUILD_DIR) -j $(JOBS) $(TARGET_NAME)_libretro
+	@cp -v $$(find $(BUILD_DIR) -name '$(TARGET)' | head -n1) .
+	@echo ">> $(TARGET) ready"
+
+clean:
+	-$(NINJA) -C $(BUILD_DIR) clean 2>/dev/null || true
+	rm -f $(TARGET)
+
+distclean:
+	rm -rf $(BUILD_DIR) $(TARGET)
+
+.PHONY: all clean distclean
