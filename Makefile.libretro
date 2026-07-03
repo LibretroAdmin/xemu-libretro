@@ -56,6 +56,9 @@ endif
 DEP_PKGS   := sdl3 glib-2.0 gmodule-2.0 pixman-1 epoxy zlib slirp samplerate libpng
 DEP_CFLAGS  := $(shell $(PKGCONF) --cflags $(DEP_PKGS) 2>/dev/null)
 DEP_LDFLAGS := $(shell $(PKGCONF) --libs-only-L $(DEP_PKGS) 2>/dev/null)
+# net/capture_win_ifnames.c needs iphlpapi; upstream resolves it through
+# the winpcap loader path, the static link needs it spelled out.
+EXTRA_LIBS  ?= -liphlpapi
 
 all: $(TARGET)
 
@@ -76,9 +79,9 @@ $(foreach a,$(LINK_ARCHIVES),$(eval $(a): | $(B)/.pregen.stamp))
 # The command line exceeds Windows limits; use a response file.
 RSP := $(B)/$(TARGET).rsp
 
-$(TARGET): $(B)/.pregen.stamp $(B)/version.rc_version.o $(LINK_OBJS) $(LINK_ARCHIVES)
+$(TARGET): $(B)/.pregen.stamp $(LINK_OBJS) $(LINK_ARCHIVES)
 	$(E) "RSP     $(notdir $(RSP))"
-	$(file >$(RSP),$(B)/version.rc_version.o $(LINK_OBJS) $(DEP_LDFLAGS) $(LINK_TAIL))
+	$(file >$(RSP),$(LINK_OBJS) $(DEP_LDFLAGS) $(LINK_TAIL) $(EXTRA_LIBS))
 	$(E) "LINK    $@"
 	$(Q)cd $(B) && $(CXX) -m64 -o $(S)/$@ @$(RSP)
 	$(E) "OK      $@"
