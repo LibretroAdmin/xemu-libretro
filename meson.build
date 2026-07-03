@@ -4829,7 +4829,9 @@ subdir('pc-bios')
 subdir('docs')
 # Tests are disabled on emscripten because they rely on host features that aren't
 # supported by emscripten (e.g. fork and unix socket).
-if host_os != 'emscripten'
+# They are also disabled for libretro builds: qtest looks up the
+# qemu-system-* executables, which are not built in that mode.
+if host_os != 'emscripten' and not get_option('libretro')
   subdir('tests')
 endif
 if gtk.found()
