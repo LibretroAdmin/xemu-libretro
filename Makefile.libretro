@@ -63,23 +63,26 @@ EXTRA_LIBS  ?= -liphlpapi
 all: $(TARGET)
 
 # --- seed the build tree with pregenerated sources/headers ---------------------
-$(B)/.pregen.stamp:
-	@mkdir -p $(B)
-	$(E) "SEED    $(B) (pregenerated sources)"
-	$(Q)cp -rp $(PREGEN)/. $(B)/
-	$(Q)touch $@
+# This must happen at Makefile PARSE time, not as a rule: the manifest
+# lists pregenerated files ($(B)/xemu-version-macro.h, generated QAPI/
+# trace .c sources, ...) as plain prerequisites with no rules of their
+# own, and under parallel make (-j) dependency resolution races ahead
+# of any seed recipe. Copying here guarantees every $(B)-rooted
+# prerequisite exists before make resolves a single dependency.
+SEED := $(shell test -f $(B)/.pregen.stamp || \
+        { mkdir -p $(B) && cp -rp $(PREGEN)/. $(B)/ && \
+          touch $(B)/.pregen.stamp; } && echo ok)
+ifneq ($(SEED),ok)
+$(error failed to seed $(B) from $(PREGEN))
+endif
 
-# every compile rule in the manifest depends on the seeded tree
 include $(S)/libretro/mk/sources_win64.mk
-
-$(foreach o,$(LINK_OBJS),$(eval $(o): | $(B)/.pregen.stamp))
-$(foreach a,$(LINK_ARCHIVES),$(eval $(a): | $(B)/.pregen.stamp))
 
 # --- link ----------------------------------------------------------------------
 # The command line exceeds Windows limits; use a response file.
 RSP := $(B)/$(TARGET).rsp
 
-$(TARGET): $(B)/.pregen.stamp $(LINK_OBJS) $(LINK_ARCHIVES)
+$(TARGET): $(LINK_OBJS) $(LINK_ARCHIVES)
 	$(E) "RSP     $(notdir $(RSP))"
 	$(file >$(RSP),$(LINK_OBJS) $(DEP_LDFLAGS) $(LINK_TAIL) $(EXTRA_LIBS))
 	$(E) "LINK    $@"
