@@ -68,21 +68,46 @@ DEP_CFLAGS  := -I$(DEPS)/include \
 ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
 
 # Vendored libraries are linked by explicit archive path (substituted
-# into the link rsp below) -- there is no -L/-l resolution to go wrong,
-# and a missing file is diagnosed here by name at parse time instead of
-# as an inscrutable 'cannot find -lfoo' from ld.
+# into the link rsp below) -- no -L/-l resolution to go wrong. Each
+# archive resolves from the vendored tree first; if a checkout is
+# missing the binaries (e.g. patches applied with a tool that drops
+# binary hunks), it falls back to the MSYS2 system copy of the same
+# library, so a plain 'pacman -S' unblocks the build with no git
+# surgery. MSYS_LIBDIR is auto-detected and overridable.
 VENDOR_LIBS := SDL3 epoxy slirp samplerate glib-2.0 intl iconv pcre2-8 z
+MSYS_LIBDIR ?= $(shell cygpath -m /mingw64/lib 2>/dev/null)
+resolve_lib  = $(firstword $(wildcard $(DEPS)/lib/lib$(1).a) \
+                           $(if $(MSYS_LIBDIR),$(wildcard $(MSYS_LIBDIR)/lib$(1).a)))
 MISSING_VENDOR := $(strip $(foreach l,$(VENDOR_LIBS),\
-    $(if $(wildcard $(DEPS)/lib/lib$(l).a),,lib$(l).a)))
+    $(if $(call resolve_lib,$(l)),,lib$(l).a)))
 ifneq ($(MISSING_VENDOR),)
-$(error missing vendored static libraries in $(DEPS)/lib: $(MISSING_VENDOR). \
-Your checkout is incomplete: try 'git checkout -- libretro/' or a fresh clone. \
-If the files exist but are tiny text files, they are LFS pointers: install \
-git-lfs and run 'git lfs pull')
+$(error cannot find these static libraries either vendored in $(DEPS)/lib or \
+in '$(MSYS_LIBDIR)': $(MISSING_VENDOR). Either repair the checkout \
+(git fetch origin master && git checkout FETCH_HEAD -- libretro/deps libretro/pregen) \
+or install the system copies: pacman -S mingw-w64-x86_64-{sdl3,libepoxy,libslirp,libsamplerate,glib2,gettext-runtime,libiconv,pcre2,zlib})
 endif
-DSP_PREGEN := $(PREGEN)/subprojects/dsp56300/dsp56300-0.1.3-x86_64-pc-windows-gnu/lib/libdsp56300_emu_ffi.a
+FALLBACK_LIBS := $(strip $(foreach l,$(VENDOR_LIBS),\
+    $(if $(wildcard $(DEPS)/lib/lib$(l).a),,$(l))))
+ifneq ($(FALLBACK_LIBS),)
+$(warning vendored archives missing for: $(FALLBACK_LIBS) -- linking the MSYS2 \
+system copies from $(MSYS_LIBDIR) instead)
+endif
+
+# dsp56300 is a prebuilt Rust static library; if the pregen copy is
+# missing, fetch the exact release meson would have downloaded.
+DSP_DIR    := $(PREGEN)/subprojects/dsp56300
+DSP_PREGEN := $(DSP_DIR)/dsp56300-0.1.3-x86_64-pc-windows-gnu/lib/libdsp56300_emu_ffi.a
+DSP_URL    := https://github.com/mborgerson/dsp56300/releases/download/v0.1.3/dsp56300-0.1.3-x86_64-pc-windows-gnu.tar.gz
 ifeq ($(wildcard $(DSP_PREGEN)),)
-$(error missing $(DSP_PREGEN) -- your checkout is incomplete (see message above))
+$(warning $(DSP_PREGEN) missing -- downloading from $(DSP_URL))
+DSP_GET := $(shell mkdir -p $(DSP_DIR) && \
+    curl -fsSL $(DSP_URL) -o $(DSP_DIR)/dsp.tar.gz && \
+    tar xzf $(DSP_DIR)/dsp.tar.gz -C $(DSP_DIR) && \
+    rm -f $(DSP_DIR)/dsp.tar.gz && echo ok)
+ifneq ($(DSP_GET),ok)
+$(error failed to download dsp56300; fetch $(DSP_URL) manually and extract it \
+into $(DSP_DIR)/)
+endif
 endif
 # Transitive static-link requirements:
 #   glib   -> intl, iconv, pcre2-8, ws2_32, ole32, shlwapi, uuid
@@ -123,7 +148,7 @@ $(TARGET): $(LINK_OBJS) $(LINK_ARCHIVES)
 	$(E) "RSP     $(notdir $(RSP))"
 	$(file >$(RSP),$(LINK_OBJS) $(LINK_TAIL) $(EXTRA_LIBS))
 	$(Q)sed -E -i \
-	    -e 's#(^| )-l(SDL3|epoxy|slirp|samplerate|glib-2\.0|intl|iconv|pcre2-8|z)\b#\1$(DEPS)/lib/lib\2.a#g' \
+	    $(foreach l,$(VENDOR_LIBS),-e 's#(^| )-l$(subst .,\.,$(l))\b#\1$(call resolve_lib,$(l))#g') \
 	    -e 's#(^| |@|=|-L|-I)/([A-Za-z])/#\1\2:/#g' $(RSP)
 	$(E) "LINK    $@"
 	$(Q)cd $(B) && $(CXX) -m64 -static-libgcc -static-libstdc++ -o $(S)/$@ @$(RSP)
