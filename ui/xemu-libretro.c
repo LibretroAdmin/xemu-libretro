@@ -70,6 +70,8 @@ extern void nv2a_lr_pfifo_pump(void);
 
 static struct retro_hw_render_callback hw_render; /* frontend-owned GL     */
 static bool     gl_ready;               /* context_reset has fired          */
+static bool     boot_pending;           /* configured, machine not started  */
+static bool     booting;                /* QEMU thread up, machine booting  */
 static GLuint   blit_fbo;               /* surface -> frontend FBO blit     */
 static unsigned  fb_w = XEMU_LR_DEF_W;
 static unsigned  fb_h = XEMU_LR_DEF_H;
@@ -228,16 +230,33 @@ static bool configure_and_boot(void)
 
     /* GL comes from the frontend (SET_HW_RENDER); nothing to create. */
     if (!xemu_lr_display_early_init()) {
-        log_cb(RETRO_LOG_ERROR, "[xemu] failed to create GL context\n");
+        log_cb(RETRO_LOG_ERROR, "[xemu] display early init failed\n");
         return false;
     }
 
+    /* Do NOT start the machine here. Machine reset (nv2a_reset) blocks
+     * on fifo idle and a pgraph flush, both serviced only by the pfifo
+     * pump -- which needs the frontend GL context, delivered via
+     * context_reset only after retro_load_game returns. The boot thread
+     * starts on the first retro_run with GL ready; the pump services
+     * the reset handshakes while boot progresses. */
+    boot_pending = true;
+    return true;
+}
+
+static void start_boot(void)
+{
     qemu_thread_create(&qemu_thread, "qemu_main", qemu_main_thread, NULL,
                        QEMU_THREAD_JOINABLE);
-    xemu_lr_wait_display_init();        /* posted once machine is up        */
+    boot_pending = false;
+    booting = true;
+}
 
-    /* Bind a synthetic controller to port 1. We write its state directly
-     * each retro_run; the xid USB gamepad device reads
+static void finish_boot(void)
+{
+    /* qemu_init is done; the machine and main loop are up. Bind a
+     * synthetic controller to port 1. We write its state directly each
+     * retro_run; the xid USB gamepad device reads
      * bound_controllers[0]->buttons / ->axis on each poll. */
     memset(&lr_pad0, 0, sizeof(lr_pad0));
     lr_pad0.type = INPUT_DEVICE_LIBRETRO;
@@ -248,8 +267,8 @@ static bool configure_and_boot(void)
     xemu_input_bind(0, &lr_pad0, 0);
     xemu_lr_unlock_main_loop();
 
+    booting = false;
     emu_started = true;
-    return true;
 }
 
 /* ========================================================================= */
@@ -522,7 +541,7 @@ RETRO_API bool retro_load_game_special(unsigned type,
 
 RETRO_API void retro_run(void)
 {
-    if (!emu_started || emu_failed || xemu_lr_is_exiting()) {
+    if (emu_failed || (emu_started && xemu_lr_is_exiting())) {
         environ_cb(RETRO_ENVIRONMENT_SHUTDOWN, NULL);
         return;
     }
@@ -532,6 +551,28 @@ RETRO_API void retro_run(void)
         video_cb(NULL, fb_w, fb_h, 0);
         static const int16_t s16sil[2] = { 0, 0 };
         audio_batch_cb(s16sil, 1);
+        return;
+    }
+
+    if (boot_pending) {
+        start_boot();
+    }
+    if (booting) {
+        /* Service the machine's reset/flush handshakes while qemu_init
+         * runs; the first pump also performs renderer init with the
+         * frontend context current. */
+        nv2a_lr_pfifo_pump();
+        if (xemu_lr_try_wait_display_init()) {
+            finish_boot();
+        } else {
+            video_cb(NULL, fb_w, fb_h, 0);
+            static const int16_t bsil[2] = { 0, 0 };
+            audio_batch_cb(bsil, 1);
+            return;
+        }
+    }
+    if (!emu_started) {
+        video_cb(NULL, fb_w, fb_h, 0);
         return;
     }
 
@@ -554,6 +595,29 @@ RETRO_API void retro_run(void)
 
 RETRO_API void retro_unload_game(void)
 {
+    if (boot_pending) {
+        /* Machine never started (no GL delivered / immediate close). */
+        boot_pending = false;
+        return;
+    }
+    if (booting) {
+        /* Mid-boot close: pump until qemu_init completes, then shut
+         * down normally. */
+        int spins = 2500; /* ~10s: do not hang the frontend forever */
+        while (!xemu_lr_try_wait_display_init() && --spins > 0) {
+            if (gl_ready) {
+                nv2a_lr_pfifo_pump();
+            }
+            g_usleep(4000);
+        }
+        if (spins <= 0) {
+            log_cb(RETRO_LOG_ERROR,
+                   "[xemu] boot did not complete during unload; "
+                   "abandoning the machine thread\n");
+            return;
+        }
+        finish_boot();
+    }
     if (!emu_started) {
         return;
     }

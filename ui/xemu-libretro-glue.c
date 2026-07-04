@@ -97,6 +97,11 @@ static void ensure_sems(void)
 
 void xemu_lr_signal_display_init(void)     { ensure_sems(); qemu_sem_post(&display_init_sem); }
 void xemu_lr_wait_display_init(void)       { ensure_sems(); qemu_sem_wait(&display_init_sem); }
+bool xemu_lr_try_wait_display_init(void)
+{
+    ensure_sems();
+    return qemu_sem_timedwait(&display_init_sem, 0) == 0;
+}
 void xemu_lr_signal_display_shutdown(void) { ensure_sems(); qemu_sem_post(&display_shutdown_sem); }
 void xemu_lr_wait_display_shutdown(void)   { ensure_sems(); qemu_sem_wait(&display_shutdown_sem); }
 
