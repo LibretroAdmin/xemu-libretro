@@ -183,6 +183,9 @@ def main():
             # command line at ~32KB and large archives exceed it.
             w('\n\t@mkdir -p $(@D)\n\t$(E) "AR      $(notdir $@)"\n'
               '\t$(file >$@.rsp,$^)\n'
+              # native Windows ar reads the rsp verbatim: MSYS /c/ drive
+              # paths must become c:/ (POSIX paths are left untouched)
+              '\t$(Q)sed -E -i ' + r"'s#(^| |@|=)/([A-Za-z])/#\1\2:/#g'" + ' $@.rsp\n'
               '\t$(Q)$(AR) rcs $@ @$@.rsp\n\n')
         w('LINK_ARCHIVES := %s\n\n' %
           ' '.join('$(B)/' + rel for rel, _ in archives))

@@ -96,6 +96,7 @@ RSP := $(B)/$(TARGET).rsp
 $(TARGET): $(LINK_OBJS) $(LINK_ARCHIVES)
 	$(E) "RSP     $(notdir $(RSP))"
 	$(file >$(RSP),$(LINK_OBJS) $(DEP_LDFLAGS) $(LINK_TAIL) $(EXTRA_LIBS))
+	$(Q)sed -E -i 's#(^| |@|=)/([A-Za-z])/#\1\2:/#g' $(RSP)
 	$(E) "LINK    $@"
 	$(Q)cd $(B) && $(CXX) -m64 -static-libgcc -static-libstdc++ -o $(S)/$@ @$(RSP)
 	$(E) "OK      $@"
