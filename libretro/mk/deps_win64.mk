@@ -21,10 +21,6 @@ SR_CFLAGS := -I$(DEPSRC)/libsamplerate/include -I$(DEPSRC)/libsamplerate/src -O2
              -DENABLE_SINC_FAST_CONVERTER -DENABLE_SINC_MEDIUM_CONVERTER \
              -DENABLE_SINC_BEST_CONVERTER -DHAVE_STDBOOL_H
 
-# ---- win-iconv (libiconv API) ------------------------------------------------
-ICONV_OBJS := $(DB)/win-iconv/win_iconv.obj
-ICONV_CFLAGS := -I$(DEPSRC)/win-iconv -O2 -DWINICONV_CONST=const
-
 # ---- proxy-libintl (gettext API stub) ----------------------------------------
 INTL_OBJS := $(DB)/proxy-libintl/libintl.obj
 INTL_CFLAGS := -I$(DEPSRC)/proxy-libintl -O2 -DG_INTL_STATIC_COMPILATION
@@ -157,7 +153,7 @@ GLIB_CFLAGS := -I$(DEPSRC)/glib/cfg -I$(DEPSRC)/glib -I$(DEPSRC)/glib/glib \
                \
                -I$(DEPSRC)/glib/glib/gnulib \
                -I$(DEPSRC)/pcre2/src -I$(DB)/deps-hdr/pcre2 \
-               -I$(DEPSRC)/proxy-libintl -I$(DEPSRC)/win-iconv -O2 \
+               -I$(DEPSRC)/proxy-libintl -O2 \
                -DGLIB_COMPILATION -DG_DISABLE_CAST_CHECKS -DG_LOG_DOMAIN='"GLib"' \
                -DPCRE2_STATIC -DPCRE2_CODE_UNIT_WIDTH=8 -DHAVE_CONFIG_H \
                -DUNICODE -D_UNICODE -DGLIB_CHARSETALIAS_DIR='"."' \
@@ -191,7 +187,6 @@ $(DB)/$(1)/%.obj: $(2)/%.c
 endef
 $(eval $(call dep_c_rule,zlib,$(DEPSRC)/zlib,$(ZLIB_CFLAGS)))
 $(eval $(call dep_c_rule,samplerate,$(DEPSRC)/libsamplerate/src,$(SR_CFLAGS)))
-$(eval $(call dep_c_rule,win-iconv,$(DEPSRC)/win-iconv,$(ICONV_CFLAGS)))
 $(eval $(call dep_c_rule,proxy-libintl,$(DEPSRC)/proxy-libintl,$(INTL_CFLAGS)))
 $(eval $(call dep_c_rule,pcre2,$(DEPSRC)/pcre2/src,$(PCRE2_CFLAGS)))
 $(eval $(call dep_c_rule,epoxy,$(DEPSRC)/libepoxy/src,$(EPOXY_CFLAGS)))
@@ -245,7 +240,6 @@ $(DB)/lib$(1).a: $(2)
 endef
 $(eval $(call dep_archive,z-dep,$(ZLIB_OBJS)))
 $(eval $(call dep_archive,samplerate-dep,$(SR_OBJS)))
-$(eval $(call dep_archive,iconv-dep,$(ICONV_OBJS)))
 $(eval $(call dep_archive,intl-dep,$(INTL_OBJS)))
 $(eval $(call dep_archive,pcre2-dep,$(PCRE2_OBJS)))
 $(eval $(call dep_archive,glib-dep,$(GLIB_OBJS)))
@@ -254,4 +248,4 @@ $(eval $(call dep_archive,slirp-dep,$(SLIRP_OBJS)))
 
 DEP_ARCHIVES := $(DB)/libepoxy-dep.a $(DB)/libslirp-dep.a \
                 $(DB)/libsamplerate-dep.a $(DB)/libglib-dep.a $(DB)/libintl-dep.a \
-                $(DB)/libiconv-dep.a $(DB)/libpcre2-dep.a $(DB)/libz-dep.a
+                $(DB)/libpcre2-dep.a $(DB)/libz-dep.a

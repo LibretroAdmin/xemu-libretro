@@ -129,7 +129,8 @@ $(TARGET): $(LINK_OBJS) $(LINK_ARCHIVES) $(DEP_ARCHIVES)
 	    -e 's#(^| )-lSDL3\b#\1#g' \
 	    -e 's#(^| )-lglib-2\.0\b#\1$(DB)/libglib-dep.a#g' \
 	    -e 's#(^| )-lpcre2-8\b#\1$(DB)/libpcre2-dep.a#g' \
-	    -e 's#(^| )-l(epoxy|slirp|samplerate|intl|iconv|z)\b#\1$(DB)/lib\2-dep.a#g' \
+	    -e 's#(^| )-liconv\b#\1#g' \
+	    -e 's#(^| )-l(epoxy|slirp|samplerate|intl|z)\b#\1$(DB)/lib\2-dep.a#g' \
 	    -e 's#(^| |@|=|-L|-I)/([A-Za-z])/#\1\2:/#g' $(RSP)
 	$(E) "LINK    $@"
 	$(Q)cd $(B) && $(CXX) -m64 -static-libgcc -static-libstdc++ -o $(S)/$@ @$(RSP)
