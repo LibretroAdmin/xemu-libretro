@@ -147,10 +147,19 @@ static void *qemu_main_thread(void *opaque)
     xemu_lr_signal_display_init();      /* unblock retro_load_game          */
 
     int status = qemu_main_loop();
-    xemu_lr_set_exiting(true);
     (void)status;
 
+    /* qemu_main_loop returns holding the BQL. The unload wait loop on
+     * the libretro thread takes the BQL every iteration (vblank), and
+     * it only signals display_shutdown after it observes the exiting
+     * flag -- holding the BQL across this wait deadlocks both threads,
+     * racily: whichever thread wins the first check decides whether
+     * shutdown completes or wedges. Drop it for the handshake. */
+    bql_unlock();
+    xemu_lr_set_exiting(true);
     xemu_lr_wait_display_shutdown();
+    bql_lock();
+
     qemu_cleanup(0);
     return NULL;
 }
@@ -663,7 +672,9 @@ RETRO_API void retro_unload_game(void)
     unsigned unload_spins = 0;
     while (!xemu_lr_is_exiting()) {
         xemu_lr_vblank();
-        nv2a_lr_pfifo_pump();
+        if (gl_ready) {
+            nv2a_lr_pfifo_pump();
+        }
         if (gl_ready) {
             (void)nv2a_get_framebuffer_surface();
             nv2a_release_framebuffer_surface();
