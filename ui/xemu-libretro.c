@@ -316,11 +316,12 @@ static void update_input(void)
 
 static void context_reset(void)
 {
-    /* The frontend's context is current on this thread right now. */
-    if (epoxy_gl_version() < 40) {
+    /* The frontend's context is current on this thread right now:
+     * the first (and only) safe moment to run NV2A's GL-probing
+     * context init. */
+    if (!xemu_lr_gl_context_ready()) {
         log_cb(RETRO_LOG_ERROR,
-               "[xemu] need OpenGL 4.0 core, frontend gave %d.%d\n",
-               epoxy_gl_version() / 10, epoxy_gl_version() % 10);
+               "[xemu] frontend GL context unusable (need 4.0 core)\n");
         emu_failed = true;
         return;
     }

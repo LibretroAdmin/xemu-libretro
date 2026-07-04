@@ -111,10 +111,32 @@ bool xemu_lr_display_early_init(void)
 {
     /* Called during retro_load_game, BEFORE the frontend delivers the
      * GL context (context_reset fires after load returns). Touch no GL
-     * here; the version check happens in context_reset and renderer
-     * init happens on the first pfifo pump. */
+     * whatsoever here: nv2a_context_init() probes the GPU with real GL
+     * calls (pgraph_gl_determine_gpu_properties), so even it must wait
+     * for context_reset. */
     ensure_sems();
-    nv2a_context_init();
+    return true;
+}
+
+/* Called from the shim's context_reset with the frontend's GL context
+ * current on this thread. Safe to probe GL and set up NV2A's context
+ * bookkeeping (no-op gloffscreen stand-ins). Idempotent per session. */
+bool xemu_lr_gl_context_ready(void)
+{
+    static bool done;
+
+    if (epoxy_gl_version() < 40) {
+        fprintf(stderr, "[xemu-lr] need OpenGL 4.0 core (got %d)\n",
+                epoxy_gl_version());
+        return false;
+    }
+    fprintf(stderr, "[xemu-lr] GL_RENDERER: %s\n", glGetString(GL_RENDERER));
+    fprintf(stderr, "[xemu-lr] GL_VERSION:  %s\n", glGetString(GL_VERSION));
+
+    if (!done) {
+        nv2a_context_init();
+        done = true;
+    }
     return true;
 }
 
