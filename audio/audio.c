@@ -1717,13 +1717,25 @@ static const VMStateDescription vmstate_audio = {
 
 void audio_create_default_audiodevs(void)
 {
-    for (int i = 0; audio_prio_list[i]; i++) {
-        if (audio_driver_lookup(audio_prio_list[i])) {
+#ifdef XEMU_LIBRETRO
+    /* The MCPX APU bypasses the QEMU audio subsystem entirely (it
+     * pushes into the libretro ring), but the machine's ACI device
+     * still opens a backend through the default-audiodev path. Give it
+     * the null backend: no dsound, no worker threads, nothing to block
+     * teardown. An empty list here is fatal ("no default audio driver
+     * available"), so 'none' must actually be registered. */
+    static const char *const lr_prio_list[] = { "none", NULL };
+    const char *const *prio_list = lr_prio_list;
+#else
+    const char *const *prio_list = audio_prio_list;
+#endif
+    for (int i = 0; prio_list[i]; i++) {
+        if (audio_driver_lookup(prio_list[i])) {
             QDict *dict = qdict_new();
             Audiodev *dev = NULL;
             Visitor *v;
 
-            qdict_put_str(dict, "driver", audio_prio_list[i]);
+            qdict_put_str(dict, "driver", prio_list[i]);
             qdict_put_str(dict, "id", "#default");
 
             v = qobject_input_visitor_new_keyval(QOBJECT(dict));

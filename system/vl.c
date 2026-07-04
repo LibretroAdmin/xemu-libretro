@@ -3097,15 +3097,6 @@ void qemu_init(int argc, char **argv)
     fake_argv[fake_argc++] = strdup("-display");
     fake_argv[fake_argc++] = strdup("xemu");
 
-#ifdef XEMU_LIBRETRO
-    /* The MCPX APU pushes audio straight into the libretro ring; the
-     * QEMU audio subsystem is entirely unused. Without this, QEMU
-     * initializes the first compiled backend (dsound on Windows),
-     * spinning up worker threads at startup and blocking on device
-     * teardown at content close. */
-    fake_argv[fake_argc++] = strdup("-audiodev");
-    fake_argv[fake_argc++] = strdup("none,id=lr-none");
-#endif
 
     // Create USB Daughterboard for 1.0 Xbox. This is connected to Port 1 of the Root hub.
     fake_argv[fake_argc++] = strdup("-device");
