@@ -127,6 +127,13 @@ void pgraph_gl_lr_frame_begin(NV2AState *d)
      * of the pixel-store state around its own uploads. */
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
+    /* glcore frontends bind sampler objects per texture unit; a bound
+     * sampler overrides every glTexParameter xemu sets. xemu never
+     * uses samplers, so unbind them from the units it draws with. */
+    for (int i = 0; i < 16; i++) {
+        glBindSampler(i, 0);
+    }
 }
 #endif
 

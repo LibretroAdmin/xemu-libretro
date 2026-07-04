@@ -440,6 +440,8 @@ int pgraph_gl_get_framebuffer_surface(NV2AState *d)
     qatomic_set(&pg->sync_pending, true);
     qemu_mutex_unlock(&d->pfifo.lock);
     qemu_mutex_lock(&pg->lock);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     pgraph_gl_sync(d);
     qemu_mutex_unlock(&pg->lock);
 #else

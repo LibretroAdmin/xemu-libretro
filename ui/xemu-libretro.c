@@ -405,10 +405,29 @@ static void present_frame(void)
     glBindFramebuffer(GL_READ_FRAMEBUFFER, blit_fbo);
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                            GL_TEXTURE_2D, tex, 0);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER,
-                      (GLuint)hw_render.get_current_framebuffer());
+    GLuint dst = (GLuint)hw_render.get_current_framebuffer();
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, dst);
+
+    static unsigned diag_frames;
+    if (diag_frames < 5) {
+        GLenum rs = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER);
+        GLenum ds = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
+        log_cb(RETRO_LOG_INFO,
+               "[xemu] present: tex=%u %ux%u dst_fbo=%u read=0x%x draw=0x%x\n",
+               tex, fb_w, fb_h, dst, rs, ds);
+    }
+
     glBlitFramebuffer(0, 0, fb_w, fb_h, 0, 0, fb_w, fb_h,
                       GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+    for (GLenum e; (e = glGetError()) != GL_NO_ERROR; ) {
+        if (diag_frames < 60) {
+            log_cb(RETRO_LOG_ERROR, "[xemu] present: GL error 0x%x\n", e);
+        }
+    }
+    if (diag_frames < 1000000) {
+        diag_frames++;
+    }
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 
     nv2a_release_framebuffer_surface();
