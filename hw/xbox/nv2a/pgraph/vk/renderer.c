@@ -191,11 +191,23 @@ static int pgraph_vk_get_framebuffer_surface(NV2AState *d)
     surface->frame_time = pg->frame_time;
 
 #if HAVE_EXTERNAL_MEMORY
+#ifdef XEMU_LIBRETRO
+    /* Single-threaded pump: this thread IS the render thread; kicking
+     * a nonexistent pfifo thread and waiting on sync_complete would
+     * deadlock against ourselves. Service the sync inline, matching
+     * the locking discipline of process_pending. */
+    qatomic_set(&pg->sync_pending, true);
+    qemu_mutex_unlock(&d->pfifo.lock);
+    qemu_mutex_lock(&pg->lock);
+    pgraph_vk_sync(d);
+    qemu_mutex_unlock(&pg->lock);
+#else
     qemu_event_reset(&d->pgraph.sync_complete);
     qatomic_set(&pg->sync_pending, true);
     pfifo_kick(d);
     qemu_mutex_unlock(&d->pfifo.lock);
     qemu_event_wait(&d->pgraph.sync_complete);
+#endif
     return r->display.gl_texture_id;
 #else
     qemu_mutex_unlock(&d->pfifo.lock);

@@ -430,11 +430,25 @@ int pgraph_gl_get_framebuffer_surface(NV2AState *d)
         );
 
     surface->frame_time = pg->frame_time;
+#ifdef XEMU_LIBRETRO
+    /* Single-threaded pump: this thread IS the render thread. Kicking
+     * the (nonexistent) pfifo thread and waiting on sync_complete
+     * would deadlock against ourselves -- the wait blocks the only
+     * thread that can service the sync. Run it inline instead, with
+     * the same locking discipline process_pending uses (drop
+     * pfifo.lock, take pgraph.lock). */
+    qatomic_set(&pg->sync_pending, true);
+    qemu_mutex_unlock(&d->pfifo.lock);
+    qemu_mutex_lock(&pg->lock);
+    pgraph_gl_sync(d);
+    qemu_mutex_unlock(&pg->lock);
+#else
     qemu_event_reset(&d->pgraph.sync_complete);
     qatomic_set(&pg->sync_pending, true);
     pfifo_kick(d);
     qemu_mutex_unlock(&d->pfifo.lock);
     qemu_event_wait(&d->pgraph.sync_complete);
+#endif
 
     return r->gl_display_buffer;
 }
