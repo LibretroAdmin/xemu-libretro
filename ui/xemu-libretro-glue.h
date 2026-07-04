@@ -19,6 +19,10 @@ bool xemu_lr_display_early_init(void);
 /* Call from context_reset (frontend GL context current): verifies GL
  * 4.0 core and performs NV2A's GL-touching context init. */
 bool xemu_lr_gl_context_ready(void);
+
+/* Pin this DLL against FreeLibrary: QEMU's resident threads outlive
+ * retro_unload_game by design. */
+void xemu_lr_pin_module(void);
 void xemu_lr_display_finalize(void);
 
 /* One guest vblank: pumps graphic_hw_update() under the BQL so NV2A

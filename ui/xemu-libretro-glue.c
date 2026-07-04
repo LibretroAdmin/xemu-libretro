@@ -69,6 +69,22 @@ HMODULE xemu_lr_module_handle(void)
     return h;
 }
 
+/* QEMU spawns threads it never joins -- call_rcu, worker pools, parked
+ * TCG vCPUs -- because a QEMU process dies as a whole. As a libretro
+ * core we get FreeLibrary'd instead, and any of those threads then
+ * executes unmapped code: a loader-lock deadlock or an execute-access
+ * fault at the exact moment the frontend unloads the core, right after
+ * a perfectly clean retro_unload_game. Pin the module so FreeLibrary
+ * is a no-op and resident threads stay harmless. */
+void xemu_lr_pin_module(void);
+void xemu_lr_pin_module(void)
+{
+    HMODULE h = NULL;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                       GET_MODULE_HANDLE_EX_FLAG_PIN,
+                       (LPCSTR)&xemu_lr_pin_module, &h);
+}
+
 /* HUD-only upstream; opaque and unused here. */
 void *xemu_get_window(void);
 void *xemu_get_window(void)

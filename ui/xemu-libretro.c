@@ -71,6 +71,7 @@ extern void nv2a_lr_pfifo_pump(void);
 static struct retro_hw_render_callback hw_render; /* frontend-owned GL     */
 static bool     gl_ready;               /* context_reset has fired          */
 static bool     boot_pending;           /* configured, machine not started  */
+static bool     machine_was_booted;     /* qemu_init is once-per-process    */
 static bool     booting;                /* QEMU thread up, machine booting  */
 static GLuint   blit_fbo;               /* surface -> frontend FBO blit     */
 static unsigned  fb_w = XEMU_LR_DEF_W;
@@ -249,12 +250,22 @@ static bool configure_and_boot(void)
      * context_reset only after retro_load_game returns. The boot thread
      * starts on the first retro_run with GL ready; the pump services
      * the reset handshakes while boot progresses. */
+    if (machine_was_booted) {
+        /* QEMU cannot be initialized twice in one process, and the
+         * pinned module keeps the process state alive across content
+         * sessions. */
+        log_cb(RETRO_LOG_ERROR,
+               "[xemu] the xemu core cannot restart within one frontend "
+               "session; restart the frontend to load content again\n");
+        return false;
+    }
     boot_pending = true;
     return true;
 }
 
 static void start_boot(void)
 {
+    machine_was_booted = true;
     qemu_thread_create(&qemu_thread, "qemu_main", qemu_main_thread, NULL,
                        QEMU_THREAD_JOINABLE);
     boot_pending = false;
@@ -475,6 +486,7 @@ RETRO_API void retro_set_input_state(retro_input_state_t cb) { input_state_cb = 
 
 RETRO_API void retro_init(void)
 {
+    xemu_lr_pin_module();
 
     const char *dir = NULL;
     if (environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &dir) && dir) {
