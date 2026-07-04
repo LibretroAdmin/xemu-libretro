@@ -397,6 +397,19 @@ static void nv2a_reset_hold(Object *obj, ResetType type)
 static void nv2a_vm_state_change(void *opaque, bool running, RunState state)
 {
     NV2AState *d = opaque;
+#ifdef XEMU_LIBRETRO
+    /* The shutdown quiesce (fifo idle handshake, pgraph flush,
+     * pre-shutdown surface downloads) is serviced by the pfifo pump
+     * and needs a live GL context. At content close the frontend has
+     * already destroyed the context and retro_unload_game has stopped
+     * pumping by the time qemu_cleanup delivers this state change --
+     * each of the three waits below deadlocks, and their purpose
+     * (coherent VRAM for whatever follows the stop) is moot when
+     * everything is being torn down. */
+    if (state == RUN_STATE_SHUTDOWN) {
+        return;
+    }
+#endif
     if (state == RUN_STATE_SAVE_VM) {
         nv2a_lock_fifo(d);
         qatomic_set(&d->pfifo.halt, true);
