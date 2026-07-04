@@ -962,10 +962,27 @@ void pgraph_gl_upload_surface_data(NV2AState *d, SurfaceBinding *surface,
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     }
 
+#ifdef XEMU_LIBRETRO
+    for (GLenum e; (e = glGetError()) != GL_NO_ERROR; ) {
+        static int n; if (n < 60) { n++;
+        fprintf(stderr, "[xemu-lr] upload: GL error 0x%x BEFORE TexImage "
+                "(preamble/detach stage)\n", e); }
+    }
+#endif
     glBindTexture(GL_TEXTURE_2D, surface->gl_buffer);
     glTexImage2D(GL_TEXTURE_2D, 0, surface->fmt.gl_internal_format, width,
                  height, 0, surface->fmt.gl_format, surface->fmt.gl_type,
                  gl_read_buf);
+#ifdef XEMU_LIBRETRO
+    for (GLenum e; (e = glGetError()) != GL_NO_ERROR; ) {
+        static int n; if (n < 60) { n++;
+        fprintf(stderr, "[xemu-lr] upload: GL error 0x%x from TexImage2D "
+                "%ux%u internal=0x%x fmt=0x%x type=0x%x buf=%u\n", e,
+                width, height, surface->fmt.gl_internal_format,
+                surface->fmt.gl_format, surface->fmt.gl_type,
+                surface->gl_buffer); }
+    }
+#endif
     glPixelStorei(GL_UNPACK_ALIGNMENT, prev_unpack_alignment);
     if (optimal_buf != buf) {
         g_free(optimal_buf);
@@ -978,6 +995,13 @@ void pgraph_gl_upload_surface_data(NV2AState *d, SurfaceBinding *surface,
     glBindTexture(GL_TEXTURE_2D, last_texture_binding);
 
     bind_current_surface(d);
+#ifdef XEMU_LIBRETRO
+    for (GLenum e; (e = glGetError()) != GL_NO_ERROR; ) {
+        static int n; if (n < 60) { n++;
+        fprintf(stderr, "[xemu-lr] upload: GL error 0x%x from "
+                "bind_current_surface\n", e); }
+    }
+#endif
 }
 
 static void compare_surfaces(SurfaceBinding *s1, SurfaceBinding *s2)

@@ -409,7 +409,7 @@ static void present_frame(void)
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, dst);
 
     static unsigned diag_frames;
-    if (diag_frames < 5) {
+    if (diag_frames < 5 || (diag_frames % 60 == 0 && diag_frames < 1800)) {
         GLenum rs = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER);
         GLenum ds = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
         /* Sample the display buffer: distinguishes "black content" from
@@ -645,6 +645,7 @@ RETRO_API void retro_unload_game(void)
     if (!emu_started) {
         return;
     }
+    log_cb(RETRO_LOG_INFO, "[xemu] unload: requesting shutdown\n");
     xemu_lr_lock_main_loop();
     qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_UI);
     xemu_lr_unlock_main_loop();
@@ -658,6 +659,7 @@ RETRO_API void retro_unload_game(void)
      * exactly what happened on the first in-frontend content close.
      * Pump vblank plus the framebuffer get/release handshake until the
      * QEMU thread flags its exit. */
+    unsigned unload_spins = 0;
     while (!xemu_lr_is_exiting()) {
         xemu_lr_vblank();
         nv2a_lr_pfifo_pump();
@@ -665,8 +667,14 @@ RETRO_API void retro_unload_game(void)
             (void)nv2a_get_framebuffer_surface();
             nv2a_release_framebuffer_surface();
         }
+        if (++unload_spins % 250 == 0) {
+            log_cb(RETRO_LOG_INFO,
+                   "[xemu] unload: still waiting for machine exit "
+                   "(%u spins)\n", unload_spins);
+        }
         g_usleep(4000);
     }
+    log_cb(RETRO_LOG_INFO, "[xemu] unload: machine exited\n");
 
     xemu_lr_signal_display_shutdown();
     qemu_thread_join(&qemu_thread);
