@@ -86,7 +86,13 @@ static char      content_path[4096];
 static char      system_dir[4096];
 
 /* Virtual controller injected into xemu's input layer (port 1 / Duke). */
-static ControllerState lr_pad0;
+static ControllerState lr_pads[4];
+#define lr_pad0 lr_pads[0]
+static unsigned port_device[4] = {
+    RETRO_DEVICE_JOYPAD, RETRO_DEVICE_NONE,
+    RETRO_DEVICE_NONE,   RETRO_DEVICE_NONE,
+};
+static bool ports_dirty;
 
 static void fallback_log(enum retro_log_level level, const char *fmt, ...)
 {
@@ -258,9 +264,27 @@ static bool configure_and_boot(void)
 
 extern void nv2a_lr_invalidate_renderer(void);
 
+static void finish_boot(void);
+
 static void do_resume(void)
 {
     resume_pending = false; /* one shot, even if a step below fails */
+
+    /* The previous session may have been closed while the machine was
+     * still in qemu_init (unload's bounded wait abandoned it). The
+     * machine is resident either way -- finish the boot before
+     * operating on it. */
+    if (booting) {
+        log_cb(RETRO_LOG_INFO, "[xemu] resume: waiting for in-flight boot\n");
+        while (!xemu_lr_try_wait_display_init()) {
+            if (gl_ready) {
+                nv2a_lr_pfifo_pump();
+            }
+            g_usleep(4000);
+        }
+        finish_boot();
+    }
+
     log_cb(RETRO_LOG_INFO, "[xemu] resume: invalidating renderer\n");
     nv2a_lr_invalidate_renderer();
 
@@ -275,7 +299,9 @@ static void do_resume(void)
     }
     log_cb(RETRO_LOG_INFO, "[xemu] resume: reset + vm_start\n");
     qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
-    vm_start();
+    if (!runstate_is_running()) {
+        vm_start();
+    }
     bql_unlock();
 
     xemu_lr_audio_reset();
@@ -295,16 +321,21 @@ static void start_boot(void)
 static void finish_boot(void)
 {
     /* qemu_init is done; the machine and main loop are up. Bind a
-     * synthetic controller to port 1. We write its state directly each
-     * retro_run; the xid USB gamepad device reads
-     * bound_controllers[0]->buttons / ->axis on each poll. */
-    memset(&lr_pad0, 0, sizeof(lr_pad0));
-    lr_pad0.type = INPUT_DEVICE_LIBRETRO;
-    lr_pad0.name = "RetroPad";
-
+     * synthetic controller on every port the frontend has a device
+     * plugged into (retro_set_controller_port_device); port 1 defaults
+     * to a RetroPad. We write pad state directly each retro_run; each
+     * xid USB gamepad reads bound_controllers[i]->buttons / ->axis. */
     xemu_lr_lock_main_loop();
     xemu_input_init();
-    xemu_input_bind(0, &lr_pad0, 0);
+    for (int i = 0; i < 4; i++) {
+        if (port_device[i] != RETRO_DEVICE_NONE) {
+            memset(&lr_pads[i], 0, sizeof(lr_pads[i]));
+            lr_pads[i].type = INPUT_DEVICE_LIBRETRO;
+            lr_pads[i].name = "RetroPad";
+            xemu_input_bind(i, &lr_pads[i], 0);
+        }
+    }
+    ports_dirty = false;
     xemu_lr_unlock_main_loop();
 
     booting = false;
@@ -315,18 +346,38 @@ static void finish_boot(void)
 /* Input: RetroPad -> Xbox Duke                                              */
 /* ========================================================================= */
 
-static int16_t axis_of(unsigned idx, unsigned id)
+static int16_t pad_axis(int port, unsigned idx, unsigned id)
 {
-    return input_state_cb(0, RETRO_DEVICE_ANALOG, idx, id);
+    return input_state_cb(port, RETRO_DEVICE_ANALOG, idx, id);
 }
 
-static void update_input(void)
+static void apply_port_changes(void)
 {
-    input_poll_cb();
+    /* retro_set_controller_port_device arrived mid-session: bind or
+     * unbind on the live machine. */
+    bql_lock();
+    for (int i = 0; i < 4; i++) {
+        extern ControllerState *xemu_input_get_bound(int index);
+        bool want = port_device[i] != RETRO_DEVICE_NONE;
+        bool have = xemu_input_get_bound(i) != NULL;
+        if (want && !have) {
+            memset(&lr_pads[i], 0, sizeof(lr_pads[i]));
+            lr_pads[i].type = INPUT_DEVICE_LIBRETRO;
+            lr_pads[i].name = "RetroPad";
+            xemu_input_bind(i, &lr_pads[i], 0);
+        } else if (!want && have) {
+            xemu_input_bind(i, NULL, 0);
+        }
+    }
+    ports_dirty = false;
+    bql_unlock();
+}
 
+static void update_pad(int port)
+{
     uint16_t b = 0;
 #define MAP(rp, xb) \
-    if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_##rp)) \
+    if (input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_##rp)) \
         b |= CONTROLLER_BUTTON_##xb
     MAP(B,      A);            /* RetroPad B (south) -> Xbox A  */
     MAP(A,      B);            /* RetroPad A (east)  -> Xbox B  */
@@ -344,26 +395,40 @@ static void update_input(void)
     MAP(R3,     RSTICK);
 #undef MAP
 
-    int16_t lt = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2)
-                     ? 32767 : axis_of(RETRO_DEVICE_INDEX_ANALOG_BUTTON,
-                                       RETRO_DEVICE_ID_JOYPAD_L2);
-    int16_t rt = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2)
-                     ? 32767 : axis_of(RETRO_DEVICE_INDEX_ANALOG_BUTTON,
-                                       RETRO_DEVICE_ID_JOYPAD_R2);
+    int16_t lt = input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2)
+                     ? 32767 : pad_axis(port, RETRO_DEVICE_INDEX_ANALOG_BUTTON,
+                                        RETRO_DEVICE_ID_JOYPAD_L2);
+    int16_t rt = input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2)
+                     ? 32767 : pad_axis(port, RETRO_DEVICE_INDEX_ANALOG_BUTTON,
+                                        RETRO_DEVICE_ID_JOYPAD_R2);
 
+    ControllerState *p = &lr_pads[port];
+    p->buttons = b;
+    p->axis[CONTROLLER_AXIS_LTRIG]    = lt;
+    p->axis[CONTROLLER_AXIS_RTRIG]    = rt;
+    p->axis[CONTROLLER_AXIS_LSTICK_X] =
+        pad_axis(port, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X);
+    p->axis[CONTROLLER_AXIS_LSTICK_Y] = (int16_t)
+        -pad_axis(port, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y);
+    p->axis[CONTROLLER_AXIS_RSTICK_X] =
+        pad_axis(port, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X);
+    p->axis[CONTROLLER_AXIS_RSTICK_Y] = (int16_t)
+        -pad_axis(port, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y);
+    p->last_input_updated_ts = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
+}
+
+static void update_input(void)
+{
+    input_poll_cb();
+    if (ports_dirty && emu_started) {
+        apply_port_changes();
+    }
     xemu_lr_lock_main_loop();
-    lr_pad0.buttons = b;
-    lr_pad0.axis[CONTROLLER_AXIS_LTRIG]    = lt;
-    lr_pad0.axis[CONTROLLER_AXIS_RTRIG]    = rt;
-    lr_pad0.axis[CONTROLLER_AXIS_LSTICK_X] =
-        axis_of(RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X);
-    lr_pad0.axis[CONTROLLER_AXIS_LSTICK_Y] = (int16_t)
-        -axis_of(RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y);
-    lr_pad0.axis[CONTROLLER_AXIS_RSTICK_X] =
-        axis_of(RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X);
-    lr_pad0.axis[CONTROLLER_AXIS_RSTICK_Y] = (int16_t)
-        -axis_of(RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y);
-    lr_pad0.last_input_updated_ts = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
+    for (int i = 0; i < 4; i++) {
+        if (port_device[i] != RETRO_DEVICE_NONE) {
+            update_pad(i);
+        }
+    }
     xemu_lr_unlock_main_loop();
 }
 
@@ -544,36 +609,49 @@ RETRO_API void retro_get_system_av_info(struct retro_system_av_info *info)
 
 RETRO_API void retro_set_controller_port_device(unsigned port, unsigned device)
 {
-    (void)port; (void)device;
+    if (port >= 4) {
+        return;
+    }
+    unsigned d = (device == RETRO_DEVICE_JOYPAD || device == RETRO_DEVICE_ANALOG)
+                     ? RETRO_DEVICE_JOYPAD : RETRO_DEVICE_NONE;
+    if (port_device[port] != d) {
+        port_device[port] = d;
+        ports_dirty = true;
+        log_cb(RETRO_LOG_INFO, "[xemu] port %u -> %s\n", port + 1,
+               d == RETRO_DEVICE_JOYPAD ? "Duke gamepad" : "disconnected");
+    }
 }
 
 RETRO_API bool retro_load_game(const struct retro_game_info *game)
 {
+    #define XPAD_DESCS(P) \
+        { P, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B,      "A" }, \
+        { P, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A,      "B" }, \
+        { P, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y,      "X" }, \
+        { P, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X,      "Y" }, \
+        { P, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,     "D-Pad Up" }, \
+        { P, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN,   "D-Pad Down" }, \
+        { P, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,   "D-Pad Left" }, \
+        { P, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT,  "D-Pad Right" }, \
+        { P, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START,  "Start" }, \
+        { P, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Back" }, \
+        { P, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L,      "White" }, \
+        { P, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R,      "Black" }, \
+        { P, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2,     "Left Trigger" }, \
+        { P, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2,     "Right Trigger" }, \
+        { P, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3,     "Left Stick Click" }, \
+        { P, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3,     "Right Stick Click" }, \
+        { P, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, \
+          RETRO_DEVICE_ID_ANALOG_X, "Left Stick X" }, \
+        { P, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, \
+          RETRO_DEVICE_ID_ANALOG_Y, "Left Stick Y" }, \
+        { P, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, \
+          RETRO_DEVICE_ID_ANALOG_X, "Right Stick X" }, \
+        { P, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, \
+          RETRO_DEVICE_ID_ANALOG_Y, "Right Stick Y" }
+
     static const struct retro_input_descriptor descs[] = {
-        { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B,      "A" },
-        { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A,      "B" },
-        { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y,      "X" },
-        { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X,      "Y" },
-        { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,     "D-Pad Up" },
-        { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN,   "D-Pad Down" },
-        { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,   "D-Pad Left" },
-        { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT,  "D-Pad Right" },
-        { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START,  "Start" },
-        { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Back" },
-        { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L,      "White" },
-        { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R,      "Black" },
-        { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2,     "Left Trigger" },
-        { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2,     "Right Trigger" },
-        { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3,     "Left Stick Click" },
-        { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3,     "Right Stick Click" },
-        { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT,
-          RETRO_DEVICE_ID_ANALOG_X, "Left Stick X" },
-        { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT,
-          RETRO_DEVICE_ID_ANALOG_Y, "Left Stick Y" },
-        { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
-          RETRO_DEVICE_ID_ANALOG_X, "Right Stick X" },
-        { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
-          RETRO_DEVICE_ID_ANALOG_Y, "Right Stick Y" },
+        XPAD_DESCS(0), XPAD_DESCS(1), XPAD_DESCS(2), XPAD_DESCS(3),
         { 0, 0, 0, 0, NULL },
     };
     environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void *)descs);
@@ -611,6 +689,15 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
         { 0, 0, 0, 0, NULL },
     };
     environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void *)desc);
+
+    static const struct retro_controller_description duke_desc[] = {
+        { "Xbox Duke Gamepad", RETRO_DEVICE_JOYPAD },
+    };
+    static const struct retro_controller_info ports_info[] = {
+        { duke_desc, 1 }, { duke_desc, 1 }, { duke_desc, 1 }, { duke_desc, 1 },
+        { NULL, 0 },
+    };
+    environ_cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void *)ports_info);
 
     if (!game || !game->path) {
         log_cb(RETRO_LOG_ERROR, "[xemu] no content path\n");
