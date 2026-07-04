@@ -365,6 +365,15 @@ static void render_display(NV2AState *d, SurfaceBinding *surface)
 
 static void gl_fence(void)
 {
+#ifdef XEMU_LIBRETRO
+    /* This fence exists to make render-context work visible to the
+     * display context before sampling. Under libretro there is one
+     * context and one thread: GL program order already guarantees the
+     * upload/draws complete before render_display samples them, and a
+     * ClientWaitSync here is a full GPU drain on the frame-critical
+     * thread, twice per present. */
+    return;
+#endif
     GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     int result = glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT,
                                          (GLuint64)(5000000000));

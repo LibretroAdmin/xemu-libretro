@@ -601,8 +601,9 @@ RETRO_API void retro_run(void)
     }
 
     update_input();
+    nv2a_lr_pfifo_pump();  /* drain work submitted since last frame        */
     xemu_lr_vblank();      /* graphic_hw_update under BQL -> new NV2A frame */
-    nv2a_lr_pfifo_pump();  /* pgraph GL work runs HERE, context is current  */
+    nv2a_lr_pfifo_pump();  /* drain work the vblank kicked off             */
     present_frame();
 
     /* Drain the MCPX APU's ring into the frontend. Cap the burst so a
