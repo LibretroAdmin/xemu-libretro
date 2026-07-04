@@ -63,7 +63,23 @@ DEP_CFLAGS  := -I$(DEPS)/include \
                -I$(DEPS)/lib/glib-2.0/include \
                -I$(DEPS)/include/slirp \
                -DGLIB_STATIC_COMPILATION -DPCRE2_STATIC -DLIBSLIRP_STATIC
-DEP_LDFLAGS := -L$(DEPS)/lib
+# Vendored libraries are linked by explicit archive path (substituted
+# into the link rsp below) -- there is no -L/-l resolution to go wrong,
+# and a missing file is diagnosed here by name at parse time instead of
+# as an inscrutable 'cannot find -lfoo' from ld.
+VENDOR_LIBS := SDL3 epoxy slirp samplerate glib-2.0 intl iconv pcre2-8 z
+MISSING_VENDOR := $(strip $(foreach l,$(VENDOR_LIBS),\
+    $(if $(wildcard $(DEPS)/lib/lib$(l).a),,lib$(l).a)))
+ifneq ($(MISSING_VENDOR),)
+$(error missing vendored static libraries in $(DEPS)/lib: $(MISSING_VENDOR). \
+Your checkout is incomplete: try 'git checkout -- libretro/' or a fresh clone. \
+If the files exist but are tiny text files, they are LFS pointers: install \
+git-lfs and run 'git lfs pull')
+endif
+DSP_PREGEN := $(PREGEN)/subprojects/dsp56300/dsp56300-0.1.3-x86_64-pc-windows-gnu/lib/libdsp56300_emu_ffi.a
+ifeq ($(wildcard $(DSP_PREGEN)),)
+$(error missing $(DSP_PREGEN) -- your checkout is incomplete (see message above))
+endif
 # Transitive static-link requirements:
 #   glib   -> intl, iconv, pcre2-8, ws2_32, ole32, shlwapi, uuid
 #   SDL3   -> setupapi, imm32, version, winmm, cfgmgr32, oleaut32
@@ -99,8 +115,10 @@ RSP := $(B)/$(TARGET).rsp
 
 $(TARGET): $(LINK_OBJS) $(LINK_ARCHIVES)
 	$(E) "RSP     $(notdir $(RSP))"
-	$(file >$(RSP),$(LINK_OBJS) $(DEP_LDFLAGS) $(LINK_TAIL) $(EXTRA_LIBS))
-	$(Q)sed -E -i 's#(^| |@|=|-L|-I)/([A-Za-z])/#\1\2:/#g' $(RSP)
+	$(file >$(RSP),$(LINK_OBJS) $(LINK_TAIL) $(EXTRA_LIBS))
+	$(Q)sed -E -i \
+	    -e 's#(^| )-l(SDL3|epoxy|slirp|samplerate|glib-2\.0|intl|iconv|pcre2-8|z)\b#\1$(DEPS)/lib/lib\2.a#g' \
+	    -e 's#(^| |@|=|-L|-I)/([A-Za-z])/#\1\2:/#g' $(RSP)
 	$(E) "LINK    $@"
 	$(Q)cd $(B) && $(CXX) -m64 -static-libgcc -static-libstdc++ -o $(S)/$@ @$(RSP)
 	$(E) "OK      $@"
