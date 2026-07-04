@@ -637,10 +637,15 @@ void nv2a_init(PCIBus *bus, int devfn, MemoryRegion *ram)
  * pgraph/pfifo work in place of the dedicated thread. */
 bool nv2a_lr_pump_ready;
 void pfifo_lr_pump(NV2AState *d);
+void pgraph_gl_lr_frame_begin(NV2AState *d);
 void nv2a_lr_pfifo_pump(void);
 void nv2a_lr_pfifo_pump(void)
 {
     if (nv2a_lr_pump_ready && g_nv2a && !g_nv2a->exiting) {
+        if (g_nv2a->pgraph.renderer &&
+            g_nv2a->pgraph.renderer->type == CONFIG_DISPLAY_RENDERER_OPENGL) {
+            pgraph_gl_lr_frame_begin(g_nv2a);
+        }
         pfifo_lr_pump(g_nv2a);
     }
 }

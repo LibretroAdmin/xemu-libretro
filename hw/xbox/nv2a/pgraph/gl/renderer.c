@@ -99,6 +99,28 @@ static void pgraph_gl_finalize(NV2AState *d)
     pg->gl_renderer_state = NULL;
 }
 
+#ifdef XEMU_LIBRETRO
+/* Called once per retro_run before the pfifo pump. The frontend runs
+ * its own GL on this shared context between frames: drain any error
+ * flags it left behind (xemu's liberal glGetError asserts would blame
+ * them on the next pgraph call) and drop the bound-program cache so
+ * the first draw of the frame re-issues glUseProgram -- the frontend
+ * has certainly changed the current program since our last draw. All
+ * other host bindings (VAO, per-unit textures, enables) are re-issued
+ * per draw already. */
+void pgraph_gl_lr_frame_begin(NV2AState *d);
+void pgraph_gl_lr_frame_begin(NV2AState *d)
+{
+    PGRAPHGLState *r = d->pgraph.gl_renderer_state;
+    if (!r) {
+        return;
+    }
+    while (glGetError() != GL_NO_ERROR) {
+    }
+    r->shader_binding = NULL;
+}
+#endif
+
 static void pgraph_gl_flip_stall(NV2AState *d)
 {
     NV2A_GL_DFRAME_TERMINATOR();
