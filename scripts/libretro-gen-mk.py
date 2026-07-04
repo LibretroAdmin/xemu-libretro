@@ -179,8 +179,11 @@ def main():
         w('\n')
         for rel, members in archives:
             w('$(B)/%s:' % rel + ''.join(' $(B)/%s' % m for m in members))
+            # ar via response file: Windows CreateProcess caps the
+            # command line at ~32KB and large archives exceed it.
             w('\n\t@mkdir -p $(@D)\n\t$(E) "AR      $(notdir $@)"\n'
-              '\t$(Q)$(AR) rcs $@ $^\n\n')
+              '\t$(file >$@.rsp,$^)\n'
+              '\t$(Q)$(AR) rcs $@ @$@.rsp\n\n')
         w('LINK_ARCHIVES := %s\n\n' %
           ' '.join('$(B)/' + rel for rel, _ in archives))
         w('LINK_TAIL := %s\n' % link_tail)
