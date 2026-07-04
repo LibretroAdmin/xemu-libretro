@@ -270,8 +270,15 @@ static void present_frame(void)
 
     GLuint tex = nv2a_get_framebuffer_surface();
     if (tex == 0) {
-        /* VGA / non-accelerated path not wired yet: show black. */
-        memset(fb_pixels, 0, (size_t)fb_w * fb_h * sizeof(uint32_t));
+        /* No color surface bound yet (early boot, mode switches).
+         * nv2a_get_framebuffer_surface() sets framebuffer_in_use even
+         * when it returns 0, so it MUST be paired with a release or the
+         * next call asserts and the render thread stalls forever
+         * waiting on framebuffer_released. Show black meanwhile. */
+        nv2a_release_framebuffer_surface();
+        /* Re-present the last good frame (initially black) rather than
+         * flashing: zero surfaces also occur transiently on mode
+         * switches mid-game, matching upstream behavior. */
         video_cb(fb_pixels, fb_w, fb_h, fb_w * sizeof(uint32_t));
         return;
     }
