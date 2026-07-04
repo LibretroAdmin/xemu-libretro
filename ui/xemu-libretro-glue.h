@@ -23,6 +23,13 @@ bool xemu_lr_gl_context_ready(void);
 /* Pin this DLL against FreeLibrary: QEMU's resident threads outlive
  * retro_unload_game by design. */
 void xemu_lr_pin_module(void);
+
+/* Swap the DVD medium (SMC eject sequence + blockdev change). */
+struct Error;
+void xemu_lr_load_disc(const char *path, struct Error **errp);
+
+/* Empty the audio ring between content sessions. */
+void xemu_lr_audio_reset(void);
 void xemu_lr_display_finalize(void);
 
 /* One guest vblank: pumps graphic_hw_update() under the BQL so NV2A

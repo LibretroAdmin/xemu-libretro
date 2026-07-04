@@ -48,6 +48,7 @@
 #include "ui/xemu-input.h"
 #include "hw/xbox/nv2a/nv2a.h"
 
+#include "qapi/error.h"
 #include "xemu-libretro-glue.h"
 
 /* ========================================================================= */
@@ -71,7 +72,8 @@ extern void nv2a_lr_pfifo_pump(void);
 static struct retro_hw_render_callback hw_render; /* frontend-owned GL     */
 static bool     gl_ready;               /* context_reset has fired          */
 static bool     boot_pending;           /* configured, machine not started  */
-static bool     machine_was_booted;     /* qemu_init is once-per-process    */
+static bool     machine_resident;       /* QEMU booted once; stays resident */
+static bool     resume_pending;         /* resident machine awaits new disc */
 static bool     booting;                /* QEMU thread up, machine booting  */
 static GLuint   blit_fbo;               /* surface -> frontend FBO blit     */
 static unsigned  fb_w = XEMU_LR_DEF_W;
@@ -250,22 +252,40 @@ static bool configure_and_boot(void)
      * context_reset only after retro_load_game returns. The boot thread
      * starts on the first retro_run with GL ready; the pump services
      * the reset handshakes while boot progresses. */
-    if (machine_was_booted) {
-        /* QEMU cannot be initialized twice in one process, and the
-         * pinned module keeps the process state alive across content
-         * sessions. */
-        log_cb(RETRO_LOG_ERROR,
-               "[xemu] the xemu core cannot restart within one frontend "
-               "session; restart the frontend to load content again\n");
-        return false;
-    }
     boot_pending = true;
     return true;
 }
 
+extern void nv2a_lr_invalidate_renderer(void);
+
+static void do_resume(void)
+{
+    resume_pending = false; /* one shot, even if a step below fails */
+    log_cb(RETRO_LOG_INFO, "[xemu] resume: invalidating renderer\n");
+    nv2a_lr_invalidate_renderer();
+
+    log_cb(RETRO_LOG_INFO, "[xemu] resume: swapping disc\n");
+    bql_lock();
+    Error *err = NULL;
+    xemu_lr_load_disc(content_path, (struct Error **)&err);
+    if (err) {
+        log_cb(RETRO_LOG_ERROR, "[xemu] resume: disc swap failed: %s\n",
+               error_get_pretty(err));
+        error_free(err);
+    }
+    log_cb(RETRO_LOG_INFO, "[xemu] resume: reset + vm_start\n");
+    qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
+    vm_start();
+    bql_unlock();
+
+    xemu_lr_audio_reset();
+    emu_started = true;
+    log_cb(RETRO_LOG_INFO, "[xemu] resume: machine running\n");
+}
+
 static void start_boot(void)
 {
-    machine_was_booted = true;
+    machine_resident = true;
     qemu_thread_create(&qemu_thread, "qemu_main", qemu_main_thread, NULL,
                        QEMU_THREAD_JOINABLE);
     boot_pending = false;
@@ -598,6 +618,15 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
     }
     snprintf(content_path, sizeof(content_path), "%s", game->path);
 
+    if (machine_resident) {
+        /* Resident machine from the previous session: skip configure
+         * entirely (the settings singleton and machine options are
+         * once-per-process; only the disc changes). Resume happens on
+         * the first retro_run with GL ready. */
+        resume_pending = true;
+        return true;
+    }
+
     if (!configure_and_boot()) {
         emu_failed = true;
         return false;
@@ -628,6 +657,9 @@ RETRO_API void retro_run(void)
         return;
     }
 
+    if (resume_pending) {
+        do_resume();
+    }
     if (boot_pending) {
         start_boot();
     }
@@ -671,14 +703,11 @@ RETRO_API void retro_run(void)
 RETRO_API void retro_unload_game(void)
 {
     if (boot_pending) {
-        /* Machine never started (no GL delivered / immediate close). */
         boot_pending = false;
         return;
     }
     if (booting) {
-        /* Mid-boot close: pump until qemu_init completes, then shut
-         * down normally. */
-        int spins = 2500; /* ~10s: do not hang the frontend forever */
+        int spins = 2500;
         while (!xemu_lr_try_wait_display_init() && --spins > 0) {
             if (gl_ready) {
                 nv2a_lr_pfifo_pump();
@@ -696,43 +725,21 @@ RETRO_API void retro_unload_game(void)
     if (!emu_started) {
         return;
     }
-    log_cb(RETRO_LOG_INFO, "[xemu] unload: requesting shutdown\n");
-    xemu_lr_lock_main_loop();
-    qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_UI);
-    xemu_lr_unlock_main_loop();
 
-    /* Upstream's main thread keeps pumping vblanks in a
-     * while (!qemu_exiting) loop through the whole shutdown: the NV2A
-     * render thread stalls on flip (pgraph_gl_flip_stall) until the
-     * presenter services the frame, and a stalled flip wedges the vCPU
-     * mid-MMIO so qemu_main_loop() can never quiesce. Stop pumping too
-     * early and qemu_thread_join() below hangs the frontend forever --
-     * exactly what happened on the first in-frontend content close.
-     * Pump vblank plus the framebuffer get/release handshake until the
-     * QEMU thread flags its exit. */
-    unsigned unload_spins = 0;
-    while (!xemu_lr_is_exiting()) {
-        xemu_lr_vblank();
-        if (gl_ready) {
-            nv2a_lr_pfifo_pump();
-        }
-        if (gl_ready) {
-            (void)nv2a_get_framebuffer_surface();
-            nv2a_release_framebuffer_surface();
-        }
-        if (++unload_spins % 250 == 0) {
-            log_cb(RETRO_LOG_INFO,
-                   "[xemu] unload: still waiting for machine exit "
-                   "(%u spins)\n", unload_spins);
-        }
-        g_usleep(4000);
-    }
-    log_cb(RETRO_LOG_INFO, "[xemu] unload: machine exited\n");
-
-    xemu_lr_signal_display_shutdown();
-    qemu_thread_join(&qemu_thread);
-    xemu_lr_display_finalize();
+    /* The machine stays resident: pause it and hand everything else to
+     * the next retro_load_game, which swaps the disc and reboots. No
+     * qemu shutdown, no thread joins, no once-per-process anything --
+     * closing and reopening content must always just work. */
+    log_cb(RETRO_LOG_INFO, "[xemu] unload: pausing resident machine\n");
+    /* BQL only: vm_stop's bdrv drain needs the main-loop thread to
+     * keep servicing its context, so the main-loop mutex must stay
+     * free. */
+    bql_lock();
+    vm_stop(RUN_STATE_PAUSED);
+    bql_unlock();
+    xemu_lr_audio_reset();
     emu_started = false;
+    log_cb(RETRO_LOG_INFO, "[xemu] unload: machine paused, resident\n");
 }
 
 RETRO_API void retro_reset(void)

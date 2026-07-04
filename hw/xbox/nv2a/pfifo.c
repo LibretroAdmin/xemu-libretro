@@ -477,28 +477,58 @@ static bool pfifo_iteration(NV2AState *d)
  * libretro thread, so pgraph GL work runs here, driven from
  * retro_run. The first call performs the renderer init that the
  * thread entry point normally does. */
-void pfifo_lr_pump(NV2AState *d);
-void pfifo_lr_pump(NV2AState *d)
-{
-    static NV2AState *inited_for;
+static NV2AState *pfifo_lr_inited_for;
+static QemuThread pfifo_lr_pump_thread;
+static bool       pfifo_lr_pump_thread_set;
 
-    if (inited_for != d) {
+bool pfifo_lr_on_pump_thread(void);
+bool pfifo_lr_on_pump_thread(void)
+{
+    return pfifo_lr_pump_thread_set &&
+           qemu_thread_is_self(&pfifo_lr_pump_thread);
+}
+
+/* Run the pump body with d->pfifo.lock already held: renderer init if
+ * needed, then iterate until idle or budget. Lets code that already
+ * holds the lock on the pump thread (nv2a_lock_fifo from vm-state
+ * handlers) service the fifo inline instead of waiting on itself. */
+void pfifo_lr_service_locked(NV2AState *d);
+void pfifo_lr_service_locked(NV2AState *d)
+{
+    if (pfifo_lr_inited_for != d) {
         static bool rcu_registered;
         if (!rcu_registered) {
             rcu_register_thread();
             rcu_registered = true;
         }
         pgraph_init_thread(d);
-        inited_for = d;
+        pfifo_lr_inited_for = d;
     }
-
-    qemu_mutex_lock(&d->pfifo.lock);
-    int budget = 64;
+    int budget = 256;
     while (pfifo_iteration(d) && --budget > 0) {
         if (d->exiting) {
             break;
         }
     }
+}
+
+void pfifo_lr_reset_init(void);
+void pfifo_lr_reset_init(void)
+{
+    /* Force renderer re-init on the next pump: the GL context changed
+     * (new content session) and every GL object name is stale. */
+    pfifo_lr_inited_for = NULL;
+}
+
+void pfifo_lr_pump(NV2AState *d);
+void pfifo_lr_pump(NV2AState *d)
+{
+    if (!pfifo_lr_pump_thread_set) {
+        qemu_thread_get_self(&pfifo_lr_pump_thread);
+        pfifo_lr_pump_thread_set = true;
+    }
+    qemu_mutex_lock(&d->pfifo.lock);
+    pfifo_lr_service_locked(d);
     qemu_mutex_unlock(&d->pfifo.lock);
 }
 #endif

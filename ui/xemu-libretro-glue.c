@@ -31,6 +31,9 @@
 
 #include "ui/xemu-settings.h"
 #include "hw/xbox/nv2a/nv2a.h"
+#include "hw/xbox/smbus.h"
+#include "qapi/qapi-commands-block.h"
+#include "system/runstate.h"
 #include "xemu-libretro-glue.h"
 
 static QemuSemaphore display_init_sem;
@@ -246,6 +249,37 @@ size_t xemu_lr_audio_drain(int16_t *out, size_t max_frames)
     lr_audio.level -= frames * 4;
     qemu_mutex_unlock(&lr_audio.lock);
     return frames;
+}
+
+/* --------------------------------------------------------------------- */
+/* Resident-session helpers: disc swap (ported from ui/xemu.c) and audio  */
+/* ring reset for pause/resume across content sessions.                   */
+/* --------------------------------------------------------------------- */
+
+void xemu_lr_load_disc(const char *path, Error **errp)
+{
+    Error *error = NULL;
+
+    /* Ensure an eject sequence is always triggered so Xbox software
+     * reloads (matches ui/xemu.c xemu_load_disc). */
+    xbox_smc_eject_button();
+    qmp_blockdev_change_medium("ide0-cd1", NULL, path, "raw", false, false,
+                               false, 0, &error);
+    if (error) {
+        error_propagate(errp, error);
+    }
+    xbox_smc_update_tray_state();
+}
+
+void xemu_lr_audio_reset(void)
+{
+    if (!lr_audio.inited) {
+        return;
+    }
+    qemu_mutex_lock(&lr_audio.lock);
+    lr_audio.rd = lr_audio.wr = 0;
+    lr_audio.level = 0;
+    qemu_mutex_unlock(&lr_audio.lock);
 }
 
 /* ===================================================================== */

@@ -280,6 +280,20 @@ static void nv2a_lock_fifo(NV2AState *d)
     qemu_cond_broadcast(&d->pfifo.fifo_cond);
     bql_unlock();
 #ifdef XEMU_LIBRETRO
+    {
+        extern bool pfifo_lr_on_pump_thread(void);
+        extern void pfifo_lr_service_locked(NV2AState *d);
+        if (pfifo_lr_on_pump_thread()) {
+            /* We ARE the pump (vm-state handlers running on the
+             * libretro thread, e.g. vm_start during session resume):
+             * waiting for our own idle broadcast deadlocks. Service
+             * the fifo inline; we already hold pfifo.lock. */
+            pfifo_lr_service_locked(d);
+            bql_lock();
+            qemu_mutex_lock(&d->pgraph.lock);
+            return;
+        }
+    }
     /* The idle broadcast comes only from the pfifo pump. During
      * teardown there is a window after the pump stops (retro thread
      * observed the exiting flag) and before pause_all_vcpus parks the
@@ -670,6 +684,28 @@ void nv2a_init(PCIBus *bus, int devfn, MemoryRegion *ram)
  * pgraph/pfifo work in place of the dedicated thread. */
 bool nv2a_lr_pump_ready;
 void pfifo_lr_pump(NV2AState *d);
+void pfifo_lr_reset_init(void);
+
+/* New content session, new frontend GL context: every GL object name
+ * held by the renderer is stale. Free the renderer state (the libretro
+ * finalize is heap-only) and force pgraph_init_thread on the next
+ * pump, which re-creates the renderer in the fresh context. */
+void nv2a_lr_invalidate_renderer(void);
+void nv2a_lr_invalidate_renderer(void)
+{
+    NV2AState *d = g_nv2a;
+    if (!d) {
+        return;
+    }
+    qemu_mutex_lock(&d->pfifo.lock);
+    qemu_mutex_lock(&d->pgraph.lock);
+    if (d->pgraph.renderer && d->pgraph.renderer->ops.finalize) {
+        d->pgraph.renderer->ops.finalize(d);
+    }
+    qemu_mutex_unlock(&d->pgraph.lock);
+    qemu_mutex_unlock(&d->pfifo.lock);
+    pfifo_lr_reset_init();
+}
 void pgraph_gl_lr_frame_begin(NV2AState *d);
 void nv2a_lr_pfifo_pump(void);
 void nv2a_lr_pfifo_pump(void)
