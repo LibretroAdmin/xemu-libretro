@@ -23,7 +23,11 @@
 
 #include "qemu/osdep.h"
 #include <math.h>
+#ifdef XEMU_LIBRETRO
+typedef struct SDL_AudioStream SDL_AudioStream; /* unused; field stays NULL */
+#else
 #include <SDL3/SDL.h>
+#endif
 #include "hw/hw.h"
 #include "hw/pci/pci.h"
 #include "hw/pci/pci_device.h"

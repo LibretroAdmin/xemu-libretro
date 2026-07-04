@@ -801,6 +801,12 @@ if 'cpp' in all_languages
 endif
 
 add_project_arguments(qemu_cflags, native: false, language: 'c')
+if get_option('libretro')
+  # Gates the SDL-free code paths tree-wide (input, APU audio sink,
+  # XBLC stubs, data paths); the static Makefile defines the same via
+  # DEP_CFLAGS.
+  add_project_arguments('-DXEMU_LIBRETRO', native: false, language: ['c', 'cpp'])
+endif
 add_project_arguments(cc.get_supported_arguments(warn_flags), native: false, language: 'c')
 if 'cpp' in all_languages
   add_project_arguments(qemu_cxxflags, native: false, language: 'cpp')

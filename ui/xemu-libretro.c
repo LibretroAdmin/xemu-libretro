@@ -6,7 +6,7 @@
  * Architecture (mirrors upstream ui/xemu.c, which this file replaces):
  *   - QEMU/xemu machine runs on its own thread (qemu_main_thread), exactly
  *     like upstream, where main() spawns qemu_main().
- *   - The libretro thread (retro_run) takes the role of upstream's SDL main
+ *   - The libretro thread (retro_run) takes the role of upstream's main
  *     loop: it pumps input into the bound ControllerState and presents the
  *     latest NV2A framebuffer.
  *   - Video, first target: GL readback. xemu's NV2A renderer draws into its
@@ -14,7 +14,8 @@
  *     surface and hand it to the frontend as XRGB8888. Zero-copy HW render
  *     is a documented follow-up (requires context sharing with the
  *     frontend's context).
- *   - Audio, first target: QEMU's SDL audio backend plays directly to the
+ *   - Audio: the MCPX APU pushes into the glue ring; retro_run drains it
+ *     into audio_batch_cb.
  *     OS (works fine inside RetroArch's process). Routing through
  *     audio_batch_cb is a follow-up.
  *
@@ -40,7 +41,6 @@
 #include "system/system.h"
 #include "system/runstate.h"
 
-#include <SDL3/SDL.h>
 #include <epoxy/gl.h>
 
 #include "ui/xemu-settings.h"
@@ -221,7 +221,7 @@ static bool configure_and_boot(void)
     g_config.display.quality.surface_scale =
         atoi(opt("xemu_surface_scale", "1"));
 
-    /* Headless GL context for NV2A (hidden SDL window). */
+    /* Headless GL context for NV2A (hidden native window, WGL). */
     if (!xemu_lr_display_early_init()) {
         log_cb(RETRO_LOG_ERROR, "[xemu] failed to create GL context\n");
         return false;
@@ -486,10 +486,16 @@ RETRO_API void retro_run(void)
     xemu_lr_vblank();      /* graphic_hw_update under BQL -> new NV2A frame */
     present_frame();
 
-    /* Audio flows through QEMU's SDL backend for now (plays directly).
-     * Feed silence so frontends with strict A/V sync don't stall. */
-    static int16_t silence[48000 / 60 * 2];
-    audio_batch_cb(silence, 48000 / 60);
+    /* Drain the MCPX APU's ring into the frontend. Cap the burst so a
+     * backlog can't blow past what frontends accept per call. */
+    static int16_t abuf[48000 / 60 * 2 * 4];
+    size_t frames = xemu_lr_audio_drain(abuf, 48000 / 60 * 4);
+    if (frames > 0) {
+        audio_batch_cb(abuf, frames);
+    } else {
+        static const int16_t silence[2] = { 0, 0 };
+        audio_batch_cb(silence, 1);
+    }
 }
 
 RETRO_API void retro_unload_game(void)
@@ -516,7 +522,7 @@ RETRO_API void retro_unload_game(void)
             (void)nv2a_get_framebuffer_surface();
             nv2a_release_framebuffer_surface();
         }
-        SDL_Delay(4);
+        g_usleep(4000);
     }
 
     xemu_lr_signal_display_shutdown();

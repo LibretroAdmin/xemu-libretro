@@ -176,6 +176,21 @@ static void throttle(MCPXAPUState *d)
     throttle_update_debug(d, start_us);
     int queued_bytes = -1;
 
+#ifdef XEMU_LIBRETRO
+    {
+        extern size_t xemu_lr_audio_queued(void);
+        queued_bytes = (int)xemu_lr_audio_queued();
+        throttle_record_queue(d, queued_bytes);
+        while (!d->pause_requested &&
+               queued_bytes >= d->monitor.queued_bytes_high) {
+            qemu_cond_timedwait(&d->cond, &d->lock, EP_FRAME_US / 1000);
+            if (d->pause_requested) {
+                break;
+            }
+            queued_bytes = (int)xemu_lr_audio_queued();
+        }
+    }
+#else
     if (d->monitor.stream) {
         queued_bytes = SDL_GetAudioStreamQueued(d->monitor.stream);
         if (queued_bytes >= 0) {
@@ -189,6 +204,7 @@ static void throttle(MCPXAPUState *d)
             queued_bytes = SDL_GetAudioStreamQueued(d->monitor.stream);
         }
     }
+#endif
 
     if (queued_bytes < 0 || queued_bytes > d->monitor.queued_bytes_low) {
         int64_t now_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);

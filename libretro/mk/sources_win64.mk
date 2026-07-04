@@ -1061,7 +1061,7 @@ $(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a.p/gloffscreen_common.c.o
 	@mkdir -p $(@D)
 	$(E) "CC      $(notdir $@)"
 	$(Q)$(CC) $(FS_22) -c -o $@ $<
-$(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a.p/gloffscreen_sdl.c.obj: $(S)/hw/xbox/nv2a/pgraph/thirdparty/gloffscreen/sdl.c
+$(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a.p/gloffscreen_wgl.c.obj: $(S)/hw/xbox/nv2a/pgraph/thirdparty/gloffscreen/wgl.c
 	@mkdir -p $(@D)
 	$(E) "CC      $(notdir $@)"
 	$(Q)$(CC) $(FS_22) -c -o $@ $<
@@ -4053,7 +4053,7 @@ $(B)/libsystem.a.p/ui_util.c.obj: $(S)/ui/util.c
 	@mkdir -p $(@D)
 	$(E) "CC      $(notdir $@)"
 	$(Q)$(CC) $(FS_42) -c -o $@ $<
-$(B)/libsystem.a.p/ui_xemu-input.c.obj: $(S)/ui/xemu-input.c
+$(B)/libsystem.a.p/ui_xemu-input-libretro.c.obj: $(S)/ui/xemu-input-libretro.c
 	@mkdir -p $(@D)
 	$(E) "CC      $(notdir $@)"
 	$(Q)$(CC) $(FS_42) -c -o $@ $<
@@ -4066,10 +4066,6 @@ $(B)/libsystem.a.p/ui_xemu-net.c.obj: $(S)/ui/xemu-net.c
 	$(E) "CC      $(notdir $@)"
 	$(Q)$(CC) $(FS_42) -c -o $@ $<
 $(B)/libsystem.a.p/ui_xemu-settings.cc.obj: $(S)/ui/xemu-settings.cc
-	@mkdir -p $(@D)
-	$(E) "CC      $(notdir $@)"
-	$(Q)$(CXX) $(FS_43) -c -o $@ $<
-$(B)/libsystem.a.p/ui_xemu-controllers.cc.obj: $(S)/ui/xemu-controllers.cc
 	@mkdir -p $(@D)
 	$(E) "CC      $(notdir $@)"
 	$(Q)$(CXX) $(FS_43) -c -o $@ $<
@@ -9125,11 +9121,10 @@ LINK_OBJS := \
   $(B)/libsystem.a.p/ui_ui-hmp-cmds.c.obj \
   $(B)/libsystem.a.p/ui_ui-qmp-cmds.c.obj \
   $(B)/libsystem.a.p/ui_util.c.obj \
-  $(B)/libsystem.a.p/ui_xemu-input.c.obj \
+  $(B)/libsystem.a.p/ui_xemu-input-libretro.c.obj \
   $(B)/libsystem.a.p/ui_xemu-monitor.c.obj \
   $(B)/libsystem.a.p/ui_xemu-net.c.obj \
   $(B)/libsystem.a.p/ui_xemu-settings.cc.obj \
-  $(B)/libsystem.a.p/ui_xemu-controllers.cc.obj \
   $(B)/libsystem.a.p/ui_xemu-data.c.obj \
   $(B)/libsystem.a.p/ui_xemu-snapshots.c.obj \
   $(B)/libsystem.a.p/ui_xemu-widescreen.c.obj \
@@ -9834,7 +9829,7 @@ $(B)/subprojects/tomlplusplus/src/libtomlplusplus.a: $(B)/subprojects/tomlpluspl
 	$(Q)sed -E -i 's#(^| |@|=|-L|-I)/([A-Za-z])/#\1\2:/#g' $@.rsp
 	$(Q)$(AR) rcs $@ @$@.rsp
 
-$(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a: $(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a.p/gloffscreen_common.c.obj $(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a.p/gloffscreen_sdl.c.obj
+$(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a: $(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a.p/gloffscreen_common.c.obj $(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a.p/gloffscreen_wgl.c.obj
 	@mkdir -p $(@D)
 	$(E) "AR      $(notdir $@)"
 	$(file >$@.rsp,$^)

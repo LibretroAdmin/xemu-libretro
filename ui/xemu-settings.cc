@@ -19,7 +19,33 @@
 
 #include "qemu/osdep.h"
 #include <stdlib.h>
+#ifdef XEMU_LIBRETRO
+#include <windows.h>
+extern "C" HMODULE xemu_lr_module_handle(void);
+/* SDL path helpers replaced with plain win32: base = directory of the
+ * loaded core, pref = %APPDATA%\xemu\xemu\ (same location the SDL
+ * implementation returns). */
+static const char *SDL_GetBasePath(void)
+{
+    static char path[MAX_PATH];
+    if (!path[0]) {
+        GetModuleFileNameA(xemu_lr_module_handle(), path, sizeof(path));
+        char *slash = strrchr(path, '\\');
+        if (slash) {
+            slash[1] = '\0';
+        }
+    }
+    return path;
+}
+static char *SDL_GetPrefPath(const char *org, const char *app)
+{
+    const char *appdata = getenv("APPDATA");
+    return g_strdup_printf("%s\\%s\\%s\\", appdata ? appdata : ".", org, app);
+}
+#define SDL_free g_free
+#else
 #include <SDL3/SDL_filesystem.h>
+#endif
 #include <string.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -31,7 +57,9 @@
 #include <iostream>
 #include <locale.h>
 
+#ifndef XEMU_LIBRETRO
 #include "xemu-controllers.h"
+#endif
 #include "xemu-settings.h"
 
 #define DEFINE_CONFIG_TREE

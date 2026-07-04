@@ -17,7 +17,25 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#ifdef XEMU_LIBRETRO
+#include <windows.h>
+/* Directory containing the loaded core, forward slashes, trailing '/'. */
+static const char *SDL_GetBasePath(void)
+{
+    static char path[MAX_PATH];
+    extern HMODULE xemu_lr_module_handle(void);
+    if (!path[0]) {
+        GetModuleFileNameA(xemu_lr_module_handle(), path, sizeof(path));
+        char *slash = strrchr(path, '\\');
+        if (slash) {
+            slash[1] = '\0';
+        }
+    }
+    return path;
+}
+#else
 #include <SDL3/SDL.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

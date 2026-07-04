@@ -25,12 +25,22 @@
 #ifndef XEMU_INPUT_H
 #define XEMU_INPUT_H
 
+#ifdef XEMU_LIBRETRO
+/* No SDL in libretro builds: the frontend owns input. Opaque stand-ins
+ * keep the shared struct layout compiling for device code. */
+typedef void SDL_Gamepad;
+typedef void SDL_Joystick;
+typedef void SDL_Haptic;
+typedef unsigned int SDL_JoystickID;
+typedef struct { unsigned char data[16]; } SDL_GUID;
+typedef union SDL_Event SDL_Event;
+#else
 #include <SDL3/SDL.h>
+#endif
 #include <stdbool.h>
 
 #include "qemu/queue.h"
 #include "xemu-settings.h"
-#include <SDL3/SDL.h>
 
 #define DRIVER_DUKE "usb-xbox-gamepad"
 #define DRIVER_S "usb-xbox-gamepad-s"

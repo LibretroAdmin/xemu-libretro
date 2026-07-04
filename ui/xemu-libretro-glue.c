@@ -1,18 +1,17 @@
 /*
  * xemu libretro glue
  * ------------------
- * This file replaces ui/xemu.c in the libretro build. It provides:
+ * Replaces ui/xemu.c in the libretro build. Provides:
  *
  *   1. The symbols the rest of the xemu tree expects ui/xemu.c to define
- *      (xemu_main_loop_lock/unlock, xemu_get_window, the DISPLAY_TYPE_XEMU
- *      QemuDisplay registration, init/shutdown semaphores).
- *   2. A hidden SDL window + GL 4.0 core context so the NV2A renderer can
- *      run headless inside a libretro frontend (nv2a_context_init() derives
- *      its shared contexts from this one, same as upstream).
- *   3. Stubs for the ImGui HUD layer (ui/xui), which is excluded from the
- *      libretro build — the frontend owns the UI.
- *
- * Target: x64 Windows first; the code itself is platform-neutral.
+ *      (xemu_main_loop_lock/unlock, the DISPLAY_TYPE_XEMU QemuDisplay
+ *      registration, init/shutdown semaphores).
+ *   2. A hidden native window + WGL 4.0 core context so the NV2A renderer
+ *      runs headless inside a libretro frontend. No SDL: the frontend owns
+ *      all real windows, audio and input.
+ *   3. The libretro audio sink the MCPX APU pushes into (48kHz S16LE
+ *      stereo ring buffer, drained by retro_run into audio_batch_cb).
+ *   4. Stubs for the excluded ImGui HUD layer.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -26,15 +25,17 @@
 #include "ui/console.h"
 #include "system/system.h"
 
-#include <SDL3/SDL.h>
+#include <windows.h>
 #include <epoxy/gl.h>
+#include <epoxy/wgl.h>
 
 #include "ui/xemu-settings.h"
 #include "hw/xbox/nv2a/nv2a.h"
 #include "xemu-libretro-glue.h"
 
-static SDL_Window   *m_window;
-static SDL_GLContext m_context;
+static HWND          m_hwnd;
+static HDC           m_hdc;
+static HGLRC         m_hglrc;
 static QemuSemaphore display_init_sem;
 static QemuSemaphore display_shutdown_sem;
 static bool          qemu_exiting;
@@ -44,14 +45,6 @@ static struct {
     DisplayChangeListener dcl;
     DisplaySurface *surface;
 } lr_con;
-
-/* Declared in ui/xui/xemu-hud.h upstream; the HUD is excluded from
- * libretro builds so declare the symbols we provide here. */
-void xemu_main_loop_lock(void);
-void xemu_main_loop_unlock(void);
-SDL_Window *xemu_get_window(void);
-void xemu_queue_notification(const char *msg);
-void xemu_queue_error_message(const char *msg);
 
 /* ===================================================================== */
 /* Symbols upstream ui/xemu.c exports for the rest of the tree            */
@@ -69,9 +62,21 @@ void xemu_main_loop_unlock(void)
     qemu_mutex_unlock_main_loop();
 }
 
-SDL_Window *xemu_get_window(void)
+HMODULE xemu_lr_module_handle(void);
+HMODULE xemu_lr_module_handle(void)
 {
-    return m_window;
+    HMODULE h = NULL;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                       GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       (LPCSTR)&xemu_lr_module_handle, &h);
+    return h;
+}
+
+/* HUD-only upstream; opaque and unused here. */
+void *xemu_get_window(void);
+void *xemu_get_window(void)
+{
+    return NULL;
 }
 
 /* ===================================================================== */
@@ -98,56 +103,92 @@ void xemu_lr_wait_display_init(void)       { ensure_sems(); qemu_sem_wait(&displ
 void xemu_lr_signal_display_shutdown(void) { ensure_sems(); qemu_sem_post(&display_shutdown_sem); }
 void xemu_lr_wait_display_shutdown(void)   { ensure_sems(); qemu_sem_wait(&display_shutdown_sem); }
 
+/* --------------------------------------------------------------------- */
+/* Hidden-window WGL context (GL 4.0 core) for NV2A                       */
+/* --------------------------------------------------------------------- */
+
+static LRESULT CALLBACK lr_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
+{
+    return DefWindowProcA(h, m, w, l);
+}
+
 bool xemu_lr_display_early_init(void)
 {
     ensure_sems();
 
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
-        fprintf(stderr, "[xemu-lr] SDL_Init failed: %s\n", SDL_GetError());
+    WNDCLASSA wc = {
+        .style = CS_OWNDC,
+        .lpfnWndProc = lr_wndproc,
+        .hInstance = GetModuleHandleA(NULL),
+        .lpszClassName = "xemu_libretro_gl",
+    };
+    RegisterClassA(&wc);
+
+    m_hwnd = CreateWindowA(wc.lpszClassName, "xemu-libretro", WS_POPUP,
+                           0, 0, 640, 480, NULL, NULL, wc.hInstance, NULL);
+    if (!m_hwnd) {
+        fprintf(stderr, "[xemu-lr] CreateWindow failed: %lu\n", GetLastError());
+        return false;
+    }
+    m_hdc = GetDC(m_hwnd);
+
+    PIXELFORMATDESCRIPTOR pfd = {
+        .nSize = sizeof(pfd),
+        .nVersion = 1,
+        .dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
+        .iPixelType = PFD_TYPE_RGBA,
+        .cColorBits = 32,
+        .cAlphaBits = 8,
+        .cDepthBits = 24,
+        .cStencilBits = 8,
+        .iLayerType = PFD_MAIN_PLANE,
+    };
+    int pf = ChoosePixelFormat(m_hdc, &pfd);
+    if (!pf || !SetPixelFormat(m_hdc, pf, &pfd)) {
+        fprintf(stderr, "[xemu-lr] SetPixelFormat failed\n");
         return false;
     }
 
-    /* Same context attributes as upstream display_very_early_init(). */
-    SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
-    SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
-    SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
-    SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
-                        SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-
-    m_window = SDL_CreateWindow("xemu-libretro", 640, 480,
-                                SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
-    if (!m_window) {
-        fprintf(stderr, "[xemu-lr] SDL_CreateWindow failed: %s\n",
-                SDL_GetError());
+    /* Bootstrap legacy context to reach wglCreateContextAttribsARB. */
+    HGLRC boot = wglCreateContext(m_hdc);
+    if (!boot || !wglMakeCurrent(m_hdc, boot)) {
+        fprintf(stderr, "[xemu-lr] bootstrap WGL context failed\n");
         return false;
     }
 
-    m_context = SDL_GL_CreateContext(m_window);
-    if (!m_context || epoxy_gl_version() < 40) {
+    static const int attribs[] = {
+        WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
+        WGL_CONTEXT_MINOR_VERSION_ARB, 0,
+        WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
+        0
+    };
+    m_hglrc = wglCreateContextAttribsARB(m_hdc, NULL, attribs);
+    wglMakeCurrent(NULL, NULL);
+    wglDeleteContext(boot);
+
+    if (!m_hglrc || !wglMakeCurrent(m_hdc, m_hglrc)) {
+        fprintf(stderr, "[xemu-lr] GL 4.0 core context unavailable\n");
+        return false;
+    }
+    if (epoxy_gl_version() < 40) {
         fprintf(stderr, "[xemu-lr] need OpenGL 4.0 core (got %d)\n",
-                m_context ? epoxy_gl_version() : 0);
+                epoxy_gl_version());
         return false;
     }
 
     fprintf(stderr, "[xemu-lr] GL_RENDERER: %s\n", glGetString(GL_RENDERER));
     fprintf(stderr, "[xemu-lr] GL_VERSION:  %s\n", glGetString(GL_VERSION));
 
-    /* NV2A creates its offscreen worker contexts shared with this one. */
+    /* NV2A creates its offscreen worker contexts shared with this one
+     * (gloffscreen/wgl.c shares against the current context). */
     nv2a_context_init();
-    SDL_GL_MakeCurrent(NULL, NULL);
+    wglMakeCurrent(NULL, NULL);
     return true;
 }
 
 bool xemu_lr_make_gl_current(void)
 {
-    return m_window && m_context &&
-           SDL_GL_MakeCurrent(m_window, m_context);
+    return m_hglrc && wglMakeCurrent(m_hdc, m_hglrc);
 }
 
 void xemu_lr_vblank(void)
@@ -162,17 +203,89 @@ void xemu_lr_vblank(void)
 
 void xemu_lr_display_finalize(void)
 {
-    SDL_GL_MakeCurrent(NULL, NULL);
-    if (m_context) {
-        SDL_GL_DestroyContext(m_context);
-        m_context = NULL;
+    wglMakeCurrent(NULL, NULL);
+    if (m_hglrc) {
+        wglDeleteContext(m_hglrc);
+        m_hglrc = NULL;
     }
-    if (m_window) {
-        SDL_DestroyWindow(m_window);
-        m_window = NULL;
+    if (m_hwnd) {
+        ReleaseDC(m_hwnd, m_hdc);
+        DestroyWindow(m_hwnd);
+        m_hwnd = NULL;
     }
-    SDL_Quit();
     lr_con.dcl.con = NULL;
+}
+
+/* ===================================================================== */
+/* Libretro audio sink: the MCPX APU pushes 48kHz S16LE stereo here;      */
+/* retro_run drains it into the frontend's audio_batch_cb.                */
+/* ===================================================================== */
+
+#define LR_AUDIO_RING_BYTES (256 * 1024) /* ~0.68s at 48kHz stereo s16 */
+
+static struct {
+    uint8_t    buf[LR_AUDIO_RING_BYTES];
+    size_t     rd, wr;      /* byte offsets, wrap via modulo   */
+    size_t     level;       /* bytes queued                    */
+    QemuMutex  lock;
+    bool       inited;
+} lr_audio;
+
+void xemu_lr_audio_init(void)
+{
+    if (!lr_audio.inited) {
+        qemu_mutex_init(&lr_audio.lock);
+        lr_audio.inited = true;
+    }
+}
+
+size_t xemu_lr_audio_queued(void)
+{
+    if (!lr_audio.inited) {
+        return 0;
+    }
+    qemu_mutex_lock(&lr_audio.lock);
+    size_t n = lr_audio.level;
+    qemu_mutex_unlock(&lr_audio.lock);
+    return n;
+}
+
+void xemu_lr_audio_push(const void *data, size_t bytes, float gain)
+{
+    if (!lr_audio.inited) {
+        return;
+    }
+    const int16_t *in = data;
+    size_t samples = bytes / sizeof(int16_t);
+
+    qemu_mutex_lock(&lr_audio.lock);
+    for (size_t i = 0; i < samples; i++) {
+        if (lr_audio.level + sizeof(int16_t) > LR_AUDIO_RING_BYTES) {
+            break; /* full: drop the excess, frontend is behind */
+        }
+        int32_t s = (int32_t)((float)in[i] * gain);
+        int16_t v = s > 32767 ? 32767 : (s < -32768 ? -32768 : (int16_t)s);
+        memcpy(&lr_audio.buf[lr_audio.wr], &v, sizeof(v));
+        lr_audio.wr = (lr_audio.wr + sizeof(v)) % LR_AUDIO_RING_BYTES;
+        lr_audio.level += sizeof(v);
+    }
+    qemu_mutex_unlock(&lr_audio.lock);
+}
+
+size_t xemu_lr_audio_drain(int16_t *out, size_t max_frames)
+{
+    if (!lr_audio.inited) {
+        return 0;
+    }
+    qemu_mutex_lock(&lr_audio.lock);
+    size_t frames = MIN(max_frames, lr_audio.level / 4); /* 2ch s16 */
+    for (size_t i = 0; i < frames * 2; i++) {
+        memcpy(&out[i], &lr_audio.buf[lr_audio.rd], sizeof(int16_t));
+        lr_audio.rd = (lr_audio.rd + sizeof(int16_t)) % LR_AUDIO_RING_BYTES;
+    }
+    lr_audio.level -= frames * 4;
+    qemu_mutex_unlock(&lr_audio.lock);
+    return frames;
 }
 
 /* ===================================================================== */
@@ -229,16 +342,17 @@ static void register_xemu_lr_display(void)
 type_init(register_xemu_lr_display);
 
 /* ===================================================================== */
-/* Stubs for the excluded ImGui HUD layer (ui/xui)                      */
-/* Extend this section as the linker demands.                             */
+/* Stubs for the excluded ImGui HUD layer (ui/xui)                        */
 /* ===================================================================== */
 #ifdef XEMU_LR_STUB_XUI
 
+void xemu_queue_notification(const char *msg);
 void xemu_queue_notification(const char *msg)
 {
     fprintf(stderr, "[xemu] %s\n", msg ? msg : "");
 }
 
+void xemu_queue_error_message(const char *msg);
 void xemu_queue_error_message(const char *msg)
 {
     fprintf(stderr, "[xemu] ERROR: %s\n", msg ? msg : "");

@@ -25,7 +25,41 @@
 #include "hw/usb.h"
 #include "hw/usb/desc.h"
 
+#ifdef XEMU_LIBRETRO
+/*
+ * No SDL in libretro builds. The XBLC (communicator) device still
+ * enumerates on the USB bus, but its audio channels stay closed: every
+ * stream stays NULL and these inline stand-ins keep the unchanged
+ * logic compiling without referencing SDL symbols.
+ */
+typedef struct SDL_AudioStream SDL_AudioStream;
+typedef struct { int channels; int freq; int format; } SDL_AudioSpec;
+typedef int SDL_AudioDeviceID;
+#define SDL_AUDIO_S16LE 0
+#define SDL_AUDIO_DEVICE_DEFAULT_RECORDING 0
+#define SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK  0
+static inline void SDL_ClearAudioStream(SDL_AudioStream *s) { (void)s; }
+static inline bool SDL_SetAudioStreamFormat(SDL_AudioStream *s,
+                                            const SDL_AudioSpec *a,
+                                            const SDL_AudioSpec *b)
+{ (void)s; (void)a; (void)b; return true; }
+static inline int SDL_GetAudioStreamAvailable(SDL_AudioStream *s)
+{ (void)s; return 0; }
+static inline int SDL_GetAudioStreamData(SDL_AudioStream *s, void *p, int n)
+{ (void)s; (void)p; (void)n; return 0; }
+static inline bool SDL_PutAudioStreamData(SDL_AudioStream *s, const void *p,
+                                          int n)
+{ (void)s; (void)p; (void)n; return true; }
+static inline void SDL_DestroyAudioStream(SDL_AudioStream *s) { (void)s; }
+static inline SDL_AudioStream *SDL_OpenAudioDeviceStream(int id,
+        const SDL_AudioSpec *spec, void *cb, void *ud)
+{ (void)id; (void)spec; (void)cb; (void)ud; return NULL; }
+static inline bool SDL_ResumeAudioStreamDevice(SDL_AudioStream *s)
+{ (void)s; return true; }
+static inline const char *SDL_GetError(void) { return "no SDL (libretro)"; }
+#else
 #include <SDL3/SDL.h>
+#endif
 
 /* #define DEBUG_XBLC */
 #ifdef DEBUG_XBLC

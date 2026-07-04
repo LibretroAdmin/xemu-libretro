@@ -22,6 +22,13 @@ bool xemu_lr_make_gl_current(void);
  * publishes a new framebuffer surface. Call once per retro_run. */
 void xemu_lr_vblank(void);
 
+/* Libretro audio sink (48kHz S16LE stereo): the MCPX APU pushes into
+ * the ring, retro_run drains it into audio_batch_cb. */
+void   xemu_lr_audio_init(void);
+size_t xemu_lr_audio_queued(void);
+void   xemu_lr_audio_push(const void *data, size_t bytes, float gain);
+size_t xemu_lr_audio_drain(short *out, size_t max_frames);
+
 /* Handshake with the QEMU thread (mirrors upstream semaphores). */
 void xemu_lr_signal_display_init(void);
 void xemu_lr_wait_display_init(void);

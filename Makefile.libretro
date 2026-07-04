@@ -17,6 +17,7 @@
 
 CORE   := xemu
 S      := $(abspath .)
+.DEFAULT_GOAL := all
 B      ?= $(S)/build-libretro
 PREGEN := $(S)/libretro/pregen
 V      := $(S)/libretro/vendor
@@ -52,49 +53,38 @@ else
 endif
 
 # --- dependencies: fully vendored, fully static --------------------------------
-# All third-party libraries (glib, SDL3, epoxy, slirp, samplerate, zlib,
+# All third-party libraries (glib, epoxy, slirp, samplerate, zlib,
 # and glib's own deps intl/iconv/pcre2) live as static archives and
-# headers under libretro/deps/win64. Nothing is looked up on the system:
+# headers under libretro/deps/src. Nothing is looked up on the system:
 # no pkg-config, no pacman dev packages, and the resulting core imports
 # only Windows system DLLs.
-DEPS := $(S)/libretro/deps/win64
-DEP_CFLAGS  := -I$(DEPS)/include \
-               -I$(DEPS)/include/glib-2.0 \
-               -I$(DEPS)/lib/glib-2.0/include \
-               -I$(DEPS)/include/slirp \
-               -DGLIB_STATIC_COMPILATION -DPCRE2_STATIC -DLIBSLIRP_STATIC
+# All third-party libraries build FROM SOURCE committed in this repo --
+# see libretro/mk/deps_win64.mk. No binary archives, no system packages,
+# no pkg-config, no fallbacks. The only non-source artifact is the
+# prebuilt dsp56300 Rust library (no C source exists), which
+# auto-downloads if absent.
+include $(S)/libretro/mk/deps_win64.mk
+
+# Transitive Win32 import libraries the static link needs beyond what
+# the extracted link line carries: slirp uses the IP helper API, glib
+# uses shlwapi path helpers. (The SDL-era list -- setupapi, imm32,
+# version, cfgmgr32 -- died with SDL.)
+EXTRA_LIBS ?= -liphlpapi -lshlwapi
+
+DEP_CFLAGS := $(GLIB_INC) \
+              -I$(S)/libretro/deps/src/libepoxy/include \
+              -I$(S)/libretro/deps/src/libslirp/src \
+              -I$(B)/deps/deps-hdr/slirp \
+              -I$(S)/libretro/deps/src/libsamplerate/include \
+              -I$(S)/libretro/deps/src/zlib \
+              -I$(S)/libretro/deps/src/vulkan-headers \
+              -DGLIB_STATIC_COMPILATION -DLIBSLIRP_STATIC -DG_INTL_STATIC_COMPILATION \
+              -DXEMU_LIBRETRO
+
 # None of the dependency checks or build-tree seeding below matter for
 # cleaning; make clean must work on any checkout, however broken.
 ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
 
-# Vendored libraries are linked by explicit archive path (substituted
-# into the link rsp below) -- no -L/-l resolution to go wrong. Each
-# archive resolves from the vendored tree first; if a checkout is
-# missing the binaries (e.g. patches applied with a tool that drops
-# binary hunks), it falls back to the MSYS2 system copy of the same
-# library, so a plain 'pacman -S' unblocks the build with no git
-# surgery. MSYS_LIBDIR is auto-detected and overridable.
-VENDOR_LIBS := SDL3 epoxy slirp samplerate glib-2.0 intl iconv pcre2-8 z
-MSYS_LIBDIR ?= $(shell cygpath -m /mingw64/lib 2>/dev/null)
-resolve_lib  = $(firstword $(wildcard $(DEPS)/lib/lib$(1).a) \
-                           $(if $(MSYS_LIBDIR),$(wildcard $(MSYS_LIBDIR)/lib$(1).a)))
-MISSING_VENDOR := $(strip $(foreach l,$(VENDOR_LIBS),\
-    $(if $(call resolve_lib,$(l)),,lib$(l).a)))
-ifneq ($(MISSING_VENDOR),)
-$(error cannot find these static libraries either vendored in $(DEPS)/lib or \
-in '$(MSYS_LIBDIR)': $(MISSING_VENDOR). Either repair the checkout \
-(git fetch origin master && git checkout FETCH_HEAD -- libretro/deps libretro/pregen) \
-or install the system copies: pacman -S mingw-w64-x86_64-{sdl3,libepoxy,libslirp,libsamplerate,glib2,gettext-runtime,libiconv,pcre2,zlib})
-endif
-FALLBACK_LIBS := $(strip $(foreach l,$(VENDOR_LIBS),\
-    $(if $(wildcard $(DEPS)/lib/lib$(l).a),,$(l))))
-ifneq ($(FALLBACK_LIBS),)
-$(warning vendored archives missing for: $(FALLBACK_LIBS) -- linking the MSYS2 \
-system copies from $(MSYS_LIBDIR) instead)
-endif
-
-# dsp56300 is a prebuilt Rust static library; if the pregen copy is
-# missing, fetch the exact release meson would have downloaded.
 DSP_DIR    := $(PREGEN)/subprojects/dsp56300
 DSP_PREGEN := $(DSP_DIR)/dsp56300-0.1.3-x86_64-pc-windows-gnu/lib/libdsp56300_emu_ffi.a
 DSP_URL    := https://github.com/mborgerson/dsp56300/releases/download/v0.1.3/dsp56300-0.1.3-x86_64-pc-windows-gnu.tar.gz
@@ -109,22 +99,7 @@ $(error failed to download dsp56300; fetch $(DSP_URL) manually and extract it \
 into $(DSP_DIR)/)
 endif
 endif
-# Transitive static-link requirements:
-#   glib   -> intl, iconv, pcre2-8, ws2_32, ole32, shlwapi, uuid
-#   SDL3   -> setupapi, imm32, version, winmm, cfgmgr32, oleaut32
-#   slirp  -> iphlpapi (also needed by net/capture_win_ifnames.c)
-EXTRA_LIBS  ?= -lintl -liconv -lpcre2-8 -liphlpapi -lsetupapi -limm32 \
-               -lversion -lcfgmgr32 -lshlwapi
 
-all: $(TARGET)
-
-# --- seed the build tree with pregenerated sources/headers ---------------------
-# This must happen at Makefile PARSE time, not as a rule: the manifest
-# lists pregenerated files ($(B)/xemu-version-macro.h, generated QAPI/
-# trace .c sources, ...) as plain prerequisites with no rules of their
-# own, and under parallel make (-j) dependency resolution races ahead
-# of any seed recipe. Copying here guarantees every $(B)-rooted
-# prerequisite exists before make resolves a single dependency.
 # Re-seed whenever pregen content is newer than the stamp (e.g. a git
 # pull added or updated pregenerated files after the build dir was
 # first created), not only when the stamp is missing.
@@ -142,13 +117,19 @@ include $(S)/libretro/mk/sources_win64.mk
 
 # --- link ----------------------------------------------------------------------
 # The command line exceeds Windows limits; use a response file.
+all: $(TARGET)
+.PHONY: all clean distclean
+
 RSP := $(B)/$(TARGET).rsp
 
-$(TARGET): $(LINK_OBJS) $(LINK_ARCHIVES)
+$(TARGET): $(LINK_OBJS) $(LINK_ARCHIVES) $(DEP_ARCHIVES)
 	$(E) "RSP     $(notdir $(RSP))"
 	$(file >$(RSP),$(LINK_OBJS) $(LINK_TAIL) $(EXTRA_LIBS))
 	$(Q)sed -E -i \
-	    $(foreach l,$(VENDOR_LIBS),-e 's#(^| )-l$(subst .,\.,$(l))\b#\1$(call resolve_lib,$(l))#g') \
+	    -e 's#(^| )-lSDL3\b#\1#g' \
+	    -e 's#(^| )-lglib-2\.0\b#\1$(DB)/libglib-dep.a#g' \
+	    -e 's#(^| )-lpcre2-8\b#\1$(DB)/libpcre2-dep.a#g' \
+	    -e 's#(^| )-l(epoxy|slirp|samplerate|intl|iconv|z)\b#\1$(DB)/lib\2-dep.a#g' \
 	    -e 's#(^| |@|=|-L|-I)/([A-Za-z])/#\1\2:/#g' $(RSP)
 	$(E) "LINK    $@"
 	$(Q)cd $(B) && $(CXX) -m64 -static-libgcc -static-libstdc++ -o $(S)/$@ @$(RSP)

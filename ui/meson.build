@@ -20,17 +20,34 @@ system_ss.add(files(
 subdir('thirdparty')
 
 xemu_ss = ss.source_set()
-xemu_ss.add(files(
-  'xemu-input.c',
-  'xemu-monitor.c',
-  'xemu-net.c',
-  'xemu-settings.cc',
-  'xemu-controllers.cc',
+if get_option('libretro')
+  # No SDL in libretro cores: the frontend owns input. A slim
+  # implementation keeps the small API surface devices consume, and
+  # the SDL mapping persistence layer (xemu-controllers.cc) is not
+  # built at all.
+  xemu_ss.add(files(
+    'xemu-input-libretro.c',
+    'xemu-monitor.c',
+    'xemu-net.c',
+    'xemu-settings.cc',
 
-  'xemu-data.c',
-  'xemu-snapshots.c',
-  'xemu-widescreen.c',
-))
+    'xemu-data.c',
+    'xemu-snapshots.c',
+    'xemu-widescreen.c',
+  ))
+else
+  xemu_ss.add(files(
+    'xemu-input.c',
+    'xemu-monitor.c',
+    'xemu-net.c',
+    'xemu-settings.cc',
+    'xemu-controllers.cc',
+
+    'xemu-data.c',
+    'xemu-snapshots.c',
+    'xemu-widescreen.c',
+  ))
+endif
 
 if not get_option('libretro')
   # ui/xemu.c owns main(), the SDL window and the DISPLAY_TYPE_XEMU

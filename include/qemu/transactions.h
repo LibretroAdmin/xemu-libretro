@@ -39,7 +39,7 @@
 #ifndef QEMU_TRANSACTIONS_H
 #define QEMU_TRANSACTIONS_H
 
-#include <gmodule.h>
+#include <glib.h>
 
 typedef struct TransactionActionDrv {
     void (*abort)(void *opaque);

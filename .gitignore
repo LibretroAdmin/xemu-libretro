@@ -26,3 +26,9 @@ build.log
 /macos-libs/
 /macos-pkgs/
 /xemu.iconset/
+
+# libretro static build outputs
+/build-w64/
+/build-libretro/
+/xemu_libretro.dll
+/xemu_libretro.dll.a
