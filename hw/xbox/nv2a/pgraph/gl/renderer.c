@@ -133,6 +133,15 @@ void pgraph_gl_lr_frame_begin(NV2AState *d)
     }
     r->shader_binding = NULL;
 
+    /* pgraph binds its framebuffer through bind_current_surface and
+     * assumes the binding persists: when the render target is
+     * unchanged between draws it never rebinds. The present path and
+     * the frontend both leave other framebuffers bound (the blit's
+     * DRAW target is the frontend's FBO), so without this every game
+     * draw lands silently in the wrong framebuffer and the surface
+     * texture stays black. */
+    glBindFramebuffer(GL_FRAMEBUFFER, r->gl_framebuffer);
+
     /* xemu assumes no pixel buffer is ever bound: with a frontend PBO
      * left on GL_PIXEL_UNPACK_BUFFER, every client-pointer
      * glTexSubImage becomes an offset into the frontend's buffer
