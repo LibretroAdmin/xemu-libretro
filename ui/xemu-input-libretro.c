@@ -12,6 +12,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/option.h"
+#include "qemu/config-file.h"
 #include "qobject/qdict.h"
 #include "monitor/qdev.h"
 #include "hw/qdev-core.h"
