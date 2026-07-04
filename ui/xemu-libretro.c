@@ -316,6 +316,14 @@ static void update_input(void)
 
 static void context_reset(void)
 {
+    /* The frontend's context is current on this thread right now. */
+    if (epoxy_gl_version() < 40) {
+        log_cb(RETRO_LOG_ERROR,
+               "[xemu] need OpenGL 4.0 core, frontend gave %d.%d\n",
+               epoxy_gl_version() / 10, epoxy_gl_version() % 10);
+        emu_failed = true;
+        return;
+    }
     gl_ready = true;
     blit_fbo = 0; /* recreate lazily in the new context */
     log_cb(RETRO_LOG_INFO, "[xemu] GL context ready: %s\n",

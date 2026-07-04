@@ -109,17 +109,11 @@ void xemu_lr_wait_display_shutdown(void)   { ensure_sems(); qemu_sem_wait(&displ
 
 bool xemu_lr_display_early_init(void)
 {
+    /* Called during retro_load_game, BEFORE the frontend delivers the
+     * GL context (context_reset fires after load returns). Touch no GL
+     * here; the version check happens in context_reset and renderer
+     * init happens on the first pfifo pump. */
     ensure_sems();
-
-    if (epoxy_gl_version() < 40) {
-        fprintf(stderr, "[xemu-lr] need OpenGL 4.0 core (got %d)\n",
-                epoxy_gl_version());
-        return false;
-    }
-
-    fprintf(stderr, "[xemu-lr] GL_RENDERER: %s\n", glGetString(GL_RENDERER));
-    fprintf(stderr, "[xemu-lr] GL_VERSION:  %s\n", glGetString(GL_VERSION));
-
     nv2a_context_init();
     return true;
 }
