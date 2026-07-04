@@ -219,19 +219,6 @@ static void tcg_accel_ops_init(AccelClass *ac)
         }
     }
 
-#ifdef XEMU_LIBRETRO
-    /* Guest time is quantized to the libretro frame: the shim advances
-     * a counter by one frame period per retro_run. This locks the
-     * TSC, the ACPI/APIC timers, and all virtual-clock timers to the
-     * same cadence as the vblank, replacing wall time (the icount
-     * hook point, without icount's per-instruction accounting). */
-    {
-        extern int64_t xemu_lr_vclock_get(void);
-        ops->get_virtual_clock = xemu_lr_vclock_get;
-        ops->get_elapsed_ticks = xemu_lr_vclock_get;
-    }
-#endif
-
     ops->cpu_reset_hold = tcg_cpu_reset_hold;
     ops->supports_guest_debug = tcg_supports_guest_debug;
     ops->insert_breakpoint = tcg_insert_breakpoint;

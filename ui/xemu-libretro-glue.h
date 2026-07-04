@@ -28,10 +28,6 @@ void xemu_lr_pin_module(void);
 struct Error;
 void xemu_lr_load_disc(const char *path, struct Error **errp);
 
-/* Retro-quantized guest clock: one frame period per vblank call. */
-int64_t xemu_lr_vclock_get(void);
-void xemu_lr_vclock_advance(void);
-
 /* Empty the audio ring between content sessions. */
 void xemu_lr_audio_reset(void);
 void xemu_lr_display_finalize(void);
