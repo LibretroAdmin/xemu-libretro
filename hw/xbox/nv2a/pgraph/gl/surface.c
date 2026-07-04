@@ -894,7 +894,14 @@ void pgraph_gl_upload_surface_data(NV2AState *d, SurfaceBinding *surface,
     GLint last_texture_binding;
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &last_texture_binding);
 
-    // FIXME: Replace with FBO to not disturb current state
+    /* These detaches operate on whatever framebuffer is bound. Inside
+     * the pump that is always pgraph's own FBO, but the display sync
+     * calls this from the present path, where the binding can be the
+     * frontend's FBO (silently stripping its attachments) or the
+     * default framebuffer 0 (GL_INVALID_OPERATION). Bind our own
+     * framebuffer first, which is also what the code below assumes. */
+    glBindFramebuffer(GL_FRAMEBUFFER,
+                      pg->gl_renderer_state->gl_framebuffer);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                            0, 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,

@@ -84,6 +84,17 @@ static void pgraph_gl_finalize(NV2AState *d)
 {
     PGRAPHState *pg = &d->pgraph;
 
+#ifdef XEMU_LIBRETRO
+    /* Device teardown runs on the QEMU thread, where the frontend's GL
+     * context has never been current: every GL call below would
+     * dispatch through a context-less thread and wedge or crash the
+     * close-content path. All GL objects live in the frontend's
+     * context and die with it -- skip the deletes, free the heap. */
+    g_free(pg->gl_renderer_state);
+    pg->gl_renderer_state = NULL;
+    return;
+#endif
+
     glo_set_current(g_nv2a_context_render);
 
     pgraph_gl_finalize_surfaces(pg);

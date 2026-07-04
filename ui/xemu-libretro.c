@@ -412,9 +412,14 @@ static void present_frame(void)
     if (diag_frames < 5) {
         GLenum rs = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER);
         GLenum ds = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
+        /* Sample the display buffer: distinguishes "black content" from
+         * "presentation problem" once and for all. */
+        uint32_t px[4] = { 0, 0, 0, 0 };
+        glReadPixels(fb_w / 2, fb_h / 2, 2, 2, GL_RGBA, GL_UNSIGNED_BYTE, px);
         log_cb(RETRO_LOG_INFO,
-               "[xemu] present: tex=%u %ux%u dst_fbo=%u read=0x%x draw=0x%x\n",
-               tex, fb_w, fb_h, dst, rs, ds);
+               "[xemu] present: tex=%u %ux%u dst_fbo=%u read=0x%x draw=0x%x "
+               "center=%08x %08x\n",
+               tex, fb_w, fb_h, dst, rs, ds, px[0], px[1]);
     }
 
     glBlitFramebuffer(0, 0, fb_w, fb_h, 0, 0, fb_w, fb_h,
