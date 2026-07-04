@@ -13,7 +13,7 @@ nv2a_vsh_cpu = declare_dependency(include_directories: nv2a_vsh_cpu_subproj.incl
 
 libgloffscreen = static_library('libgloffscreen',
                           sources: files('gloffscreen/common.c',
-                                         get_option('libretro') ? 'gloffscreen/wgl.c'
+                                         get_option('libretro') ? 'gloffscreen/libretro.c'
                                                                  : 'gloffscreen/sdl.c'),
                           dependencies: sdl)
 gloffscreen = declare_dependency(link_with: libgloffscreen,

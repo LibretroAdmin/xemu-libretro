@@ -449,6 +449,60 @@ static void pfifo_run_pusher(NV2AState *d)
     }
 }
 
+/* One scheduler pass over the pusher/puller state. Called with
+ * d->pfifo.lock held. Returns true if work was kicked and another
+ * pass should run immediately; broadcasts idle otherwise. */
+static bool pfifo_iteration(NV2AState *d)
+{
+    d->pfifo.fifo_kick = false;
+
+    pgraph_process_pending(d);
+
+    if (!d->pfifo.halt) {
+        pfifo_run_pusher(d);
+    }
+
+    pgraph_process_pending_reports(d);
+
+    if (!d->pfifo.fifo_kick) {
+        qemu_cond_broadcast(&d->pfifo.fifo_idle_cond);
+        return false;
+    }
+    return true;
+}
+
+#ifdef XEMU_LIBRETRO
+/* Single-threaded pump for libretro builds: the pfifo thread is not
+ * spawned, and the frontend's GL context is only current on the
+ * libretro thread, so pgraph GL work runs here, driven from
+ * retro_run. The first call performs the renderer init that the
+ * thread entry point normally does. */
+void pfifo_lr_pump(NV2AState *d);
+void pfifo_lr_pump(NV2AState *d)
+{
+    static NV2AState *inited_for;
+
+    if (inited_for != d) {
+        static bool rcu_registered;
+        if (!rcu_registered) {
+            rcu_register_thread();
+            rcu_registered = true;
+        }
+        pgraph_init_thread(d);
+        inited_for = d;
+    }
+
+    qemu_mutex_lock(&d->pfifo.lock);
+    int budget = 64;
+    while (pfifo_iteration(d) && --budget > 0) {
+        if (d->exiting) {
+            break;
+        }
+    }
+    qemu_mutex_unlock(&d->pfifo.lock);
+}
+#endif
+
 void *pfifo_thread(void *arg)
 {
     NV2AState *d = (NV2AState *)arg;
@@ -459,19 +513,7 @@ void *pfifo_thread(void *arg)
 
     qemu_mutex_lock(&d->pfifo.lock);
     while (true) {
-        d->pfifo.fifo_kick = false;
-
-        pgraph_process_pending(d);
-
-        if (!d->pfifo.halt) {
-            pfifo_run_pusher(d);
-        }
-
-        pgraph_process_pending_reports(d);
-
-        if (!d->pfifo.fifo_kick) {
-            qemu_cond_broadcast(&d->pfifo.fifo_idle_cond);
-
+        if (!pfifo_iteration(d)) {
             // Both the pusher and puller are waiting for some action
             qemu_cond_wait(&d->pfifo.fifo_cond, &d->pfifo.lock);
         }

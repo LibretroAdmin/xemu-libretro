@@ -16,7 +16,6 @@ extern "C" {
 /* Hidden-window GL context for NV2A. Call before spawning the QEMU thread. */
 bool xemu_lr_display_early_init(void);
 void xemu_lr_display_finalize(void);
-bool xemu_lr_make_gl_current(void);
 
 /* One guest vblank: pumps graphic_hw_update() under the BQL so NV2A
  * publishes a new framebuffer surface. Call once per retro_run. */

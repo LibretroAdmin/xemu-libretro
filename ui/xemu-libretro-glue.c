@@ -6,9 +6,10 @@
  *   1. The symbols the rest of the xemu tree expects ui/xemu.c to define
  *      (xemu_main_loop_lock/unlock, the DISPLAY_TYPE_XEMU QemuDisplay
  *      registration, init/shutdown semaphores).
- *   2. A hidden native window + WGL 4.0 core context so the NV2A renderer
- *      runs headless inside a libretro frontend. No SDL: the frontend owns
- *      all real windows, audio and input.
+ *   2. Display-listener plumbing for the NV2A renderer. The frontend owns
+ *      the GL context (RETRO_ENVIRONMENT_SET_HW_RENDER); all pgraph GL
+ *      work runs on the libretro thread via the pfifo pump, so no window
+ *      or context is created here at all.
  *   3. The libretro audio sink the MCPX APU pushes into (48kHz S16LE
  *      stereo ring buffer, drained by retro_run into audio_batch_cb).
  *   4. Stubs for the excluded ImGui HUD layer.
@@ -27,15 +28,11 @@
 
 #include <windows.h>
 #include <epoxy/gl.h>
-#include <epoxy/wgl.h>
 
 #include "ui/xemu-settings.h"
 #include "hw/xbox/nv2a/nv2a.h"
 #include "xemu-libretro-glue.h"
 
-static HWND          m_hwnd;
-static HDC           m_hdc;
-static HGLRC         m_hglrc;
 static QemuSemaphore display_init_sem;
 static QemuSemaphore display_shutdown_sem;
 static bool          qemu_exiting;
@@ -104,72 +101,16 @@ void xemu_lr_signal_display_shutdown(void) { ensure_sems(); qemu_sem_post(&displ
 void xemu_lr_wait_display_shutdown(void)   { ensure_sems(); qemu_sem_wait(&display_shutdown_sem); }
 
 /* --------------------------------------------------------------------- */
-/* Hidden-window WGL context (GL 4.0 core) for NV2A                       */
+/* Display init: the frontend owns the GL context (SET_HW_RENDER). By    */
+/* the time the shim calls this, context_reset has fired and the         */
+/* frontend context is current on this thread. NV2A's gloffscreen        */
+/* "contexts" are no-op stand-ins for it.                                */
 /* --------------------------------------------------------------------- */
-
-static LRESULT CALLBACK lr_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
-{
-    return DefWindowProcA(h, m, w, l);
-}
 
 bool xemu_lr_display_early_init(void)
 {
     ensure_sems();
 
-    WNDCLASSA wc = {
-        .style = CS_OWNDC,
-        .lpfnWndProc = lr_wndproc,
-        .hInstance = GetModuleHandleA(NULL),
-        .lpszClassName = "xemu_libretro_gl",
-    };
-    RegisterClassA(&wc);
-
-    m_hwnd = CreateWindowA(wc.lpszClassName, "xemu-libretro", WS_POPUP,
-                           0, 0, 640, 480, NULL, NULL, wc.hInstance, NULL);
-    if (!m_hwnd) {
-        fprintf(stderr, "[xemu-lr] CreateWindow failed: %lu\n", GetLastError());
-        return false;
-    }
-    m_hdc = GetDC(m_hwnd);
-
-    PIXELFORMATDESCRIPTOR pfd = {
-        .nSize = sizeof(pfd),
-        .nVersion = 1,
-        .dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
-        .iPixelType = PFD_TYPE_RGBA,
-        .cColorBits = 32,
-        .cAlphaBits = 8,
-        .cDepthBits = 24,
-        .cStencilBits = 8,
-        .iLayerType = PFD_MAIN_PLANE,
-    };
-    int pf = ChoosePixelFormat(m_hdc, &pfd);
-    if (!pf || !SetPixelFormat(m_hdc, pf, &pfd)) {
-        fprintf(stderr, "[xemu-lr] SetPixelFormat failed\n");
-        return false;
-    }
-
-    /* Bootstrap legacy context to reach wglCreateContextAttribsARB. */
-    HGLRC boot = wglCreateContext(m_hdc);
-    if (!boot || !wglMakeCurrent(m_hdc, boot)) {
-        fprintf(stderr, "[xemu-lr] bootstrap WGL context failed\n");
-        return false;
-    }
-
-    static const int attribs[] = {
-        WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
-        WGL_CONTEXT_MINOR_VERSION_ARB, 0,
-        WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
-        0
-    };
-    m_hglrc = wglCreateContextAttribsARB(m_hdc, NULL, attribs);
-    wglMakeCurrent(NULL, NULL);
-    wglDeleteContext(boot);
-
-    if (!m_hglrc || !wglMakeCurrent(m_hdc, m_hglrc)) {
-        fprintf(stderr, "[xemu-lr] GL 4.0 core context unavailable\n");
-        return false;
-    }
     if (epoxy_gl_version() < 40) {
         fprintf(stderr, "[xemu-lr] need OpenGL 4.0 core (got %d)\n",
                 epoxy_gl_version());
@@ -179,16 +120,8 @@ bool xemu_lr_display_early_init(void)
     fprintf(stderr, "[xemu-lr] GL_RENDERER: %s\n", glGetString(GL_RENDERER));
     fprintf(stderr, "[xemu-lr] GL_VERSION:  %s\n", glGetString(GL_VERSION));
 
-    /* NV2A creates its offscreen worker contexts shared with this one
-     * (gloffscreen/wgl.c shares against the current context). */
     nv2a_context_init();
-    wglMakeCurrent(NULL, NULL);
     return true;
-}
-
-bool xemu_lr_make_gl_current(void)
-{
-    return m_hglrc && wglMakeCurrent(m_hdc, m_hglrc);
 }
 
 void xemu_lr_vblank(void)
@@ -203,16 +136,6 @@ void xemu_lr_vblank(void)
 
 void xemu_lr_display_finalize(void)
 {
-    wglMakeCurrent(NULL, NULL);
-    if (m_hglrc) {
-        wglDeleteContext(m_hglrc);
-        m_hglrc = NULL;
-    }
-    if (m_hwnd) {
-        ReleaseDC(m_hwnd, m_hdc);
-        DestroyWindow(m_hwnd);
-        m_hwnd = NULL;
-    }
     lr_con.dcl.con = NULL;
 }
 

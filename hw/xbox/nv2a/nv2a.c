@@ -234,9 +234,16 @@ static void nv2a_init_memory(NV2AState *d, MemoryRegion *ram)
 
     pgraph_init(d);
 
+#ifdef XEMU_LIBRETRO
+    /* No pfifo thread: the frontend's GL context is only current on
+     * the libretro thread, so pgraph GL work is pumped from retro_run
+     * via nv2a_lr_pfifo_pump(). */
+    (void)pfifo_thread;
+#else
     /* fire up pfifo */
     qemu_thread_create(&d->pfifo.thread, "nv2a.pfifo_thread",
                        pfifo_thread, d, QEMU_THREAD_JOINABLE);
+#endif
 }
 
 static void nv2a_init_vga(NV2AState *d)
@@ -366,7 +373,9 @@ static void nv2a_exitfn(PCIDevice *dev)
     d->exiting = true;
 
     qemu_cond_broadcast(&d->pfifo.fifo_cond);
+#ifndef XEMU_LIBRETRO
     qemu_thread_join(&d->pfifo.thread);
+#endif
 
     pgraph_destroy(&d->pgraph);
 }
@@ -617,3 +626,16 @@ void nv2a_init(PCIBus *bus, int devfn, MemoryRegion *ram)
     nv2a_init_vga(d);
     qemu_add_vm_change_state_handler(nv2a_vm_state_change, d);
 }
+
+#ifdef XEMU_LIBRETRO
+/* Called from the libretro thread (frontend GL context current) to run
+ * pgraph/pfifo work in place of the dedicated thread. */
+void pfifo_lr_pump(NV2AState *d);
+void nv2a_lr_pfifo_pump(void);
+void nv2a_lr_pfifo_pump(void)
+{
+    if (g_nv2a && !g_nv2a->exiting) {
+        pfifo_lr_pump(g_nv2a);
+    }
+}
+#endif

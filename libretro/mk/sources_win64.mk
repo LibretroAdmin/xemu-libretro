@@ -1019,7 +1019,7 @@ $(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a.p/gloffscreen_common.c.o
 	@mkdir -p $(@D)
 	$(E) "CC      $(notdir $@)"
 	$(Q)$(CC) $(FS_22) -c -o $@ $<
-$(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a.p/gloffscreen_wgl.c.obj: $(S)/hw/xbox/nv2a/pgraph/thirdparty/gloffscreen/wgl.c
+$(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a.p/gloffscreen_libretro.c.obj: $(S)/hw/xbox/nv2a/pgraph/thirdparty/gloffscreen/libretro.c
 	@mkdir -p $(@D)
 	$(E) "CC      $(notdir $@)"
 	$(Q)$(CC) $(FS_22) -c -o $@ $<
@@ -9779,7 +9779,7 @@ $(B)/subprojects/tomlplusplus/src/libtomlplusplus.a: $(B)/subprojects/tomlpluspl
 	$(Q)sed -E -i 's#(^| |@|=|-L|-I)/([A-Za-z])/#\1\2:/#g' $@.rsp
 	$(Q)$(AR) rcs $@ @$@.rsp
 
-$(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a: $(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a.p/gloffscreen_common.c.obj $(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a.p/gloffscreen_wgl.c.obj
+$(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a: $(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a.p/gloffscreen_common.c.obj $(B)/hw/xbox/nv2a/pgraph/thirdparty/liblibgloffscreen.a.p/gloffscreen_libretro.c.obj
 	@mkdir -p $(@D)
 	$(E) "AR      $(notdir $@)"
 	$(file >$@.rsp,$^)

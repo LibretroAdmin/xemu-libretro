@@ -10,7 +10,8 @@
  *     loop: it pumps input into the bound ControllerState and presents the
  *     latest NV2A framebuffer.
  *   - Video, first target: GL readback. xemu's NV2A renderer draws into its
- *     own (hidden-window) GL context; we glGetTexImage the framebuffer
+ *     the frontend's GL context; the NV2A surface is blitted into the
+ *     frontend's FBO (RETRO_HW_FRAME_BUFFER_VALID), zero readback
  *     surface and hand it to the frontend as XRGB8888. Zero-copy HW render
  *     is a documented follow-up (requires context sharing with the
  *     frontend's context).
@@ -65,7 +66,11 @@ static retro_log_printf_t         log_cb;
 #define XEMU_LR_DEF_W 640
 #define XEMU_LR_DEF_H 480
 
-static uint32_t *fb_pixels;             /* XRGB8888 readback buffer         */
+extern void nv2a_lr_pfifo_pump(void);
+
+static struct retro_hw_render_callback hw_render; /* frontend-owned GL     */
+static bool     gl_ready;               /* context_reset has fired          */
+static GLuint   blit_fbo;               /* surface -> frontend FBO blit     */
 static unsigned  fb_w = XEMU_LR_DEF_W;
 static unsigned  fb_h = XEMU_LR_DEF_H;
 
@@ -221,7 +226,7 @@ static bool configure_and_boot(void)
     g_config.display.quality.surface_scale =
         atoi(opt("xemu_surface_scale", "1"));
 
-    /* Headless GL context for NV2A (hidden native window, WGL). */
+    /* GL comes from the frontend (SET_HW_RENDER); nothing to create. */
     if (!xemu_lr_display_early_init()) {
         log_cb(RETRO_LOG_ERROR, "[xemu] failed to create GL context\n");
         return false;
@@ -304,13 +309,32 @@ static void update_input(void)
 }
 
 /* ========================================================================= */
-/* Video: read back NV2A framebuffer surface                                 */
+/* Video: frontend-owned GL context (RETRO_ENVIRONMENT_SET_HW_RENDER).       */
+/* The NV2A surface texture is blitted straight into the frontend's FBO;     */
+/* no readback, no core-side context, no window.                             */
 /* ========================================================================= */
+
+static void context_reset(void)
+{
+    gl_ready = true;
+    blit_fbo = 0; /* recreate lazily in the new context */
+    log_cb(RETRO_LOG_INFO, "[xemu] GL context ready: %s\n",
+           (const char *)glGetString(GL_RENDERER));
+}
+
+static void context_destroy(void)
+{
+    /* All pgraph GL objects live in this context; xemu cannot recreate
+     * them mid-session. cache_context asks the frontend to avoid this
+     * outside teardown. */
+    gl_ready = false;
+    blit_fbo = 0;
+}
 
 static void present_frame(void)
 {
-    if (!xemu_lr_make_gl_current()) {
-        video_cb(NULL, fb_w, fb_h, fb_w * sizeof(uint32_t)); /* dupe frame  */
+    if (!gl_ready) {
+        video_cb(NULL, fb_w, fb_h, 0); /* dupe */
         return;
     }
 
@@ -319,13 +343,9 @@ static void present_frame(void)
         /* No color surface bound yet (early boot, mode switches).
          * nv2a_get_framebuffer_surface() sets framebuffer_in_use even
          * when it returns 0, so it MUST be paired with a release or the
-         * next call asserts and the render thread stalls forever
-         * waiting on framebuffer_released. Show black meanwhile. */
+         * pump stalls forever waiting on framebuffer_released. */
         nv2a_release_framebuffer_surface();
-        /* Re-present the last good frame (initially black) rather than
-         * flashing: zero surfaces also occur transiently on mode
-         * switches mid-game, matching upstream behavior. */
-        video_cb(fb_pixels, fb_w, fb_h, fb_w * sizeof(uint32_t));
+        video_cb(NULL, fb_w, fb_h, 0); /* dupe last frame */
         return;
     }
 
@@ -333,33 +353,39 @@ static void present_frame(void)
     glBindTexture(GL_TEXTURE_2D, tex);
     glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH,  &w);
     glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &h);
-
-    if (w > 0 && h > 0 && w <= XEMU_LR_MAX_W && h <= XEMU_LR_MAX_H) {
-        if ((unsigned)w != fb_w || (unsigned)h != fb_h) {
-            fb_w = (unsigned)w;
-            fb_h = (unsigned)h;
-            struct retro_game_geometry geom = {
-                .base_width  = fb_w, .base_height = fb_h,
-                .max_width   = XEMU_LR_MAX_W, .max_height = XEMU_LR_MAX_H,
-                .aspect_ratio = (float)fb_w / (float)fb_h,
-            };
-            environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &geom);
-        }
-        glGetTexImage(GL_TEXTURE_2D, 0, GL_BGRA, GL_UNSIGNED_BYTE, fb_pixels);
-
-        /* NV2A surfaces are bottom-up; flip in place. */
-        for (unsigned y = 0; y < fb_h / 2; y++) {
-            uint32_t *a = fb_pixels + (size_t)y * fb_w;
-            uint32_t *c = fb_pixels + (size_t)(fb_h - 1 - y) * fb_w;
-            for (unsigned x = 0; x < fb_w; x++) {
-                uint32_t t = a[x]; a[x] = c[x]; c[x] = t;
-            }
-        }
-    }
     glBindTexture(GL_TEXTURE_2D, 0);
+
+    if (w > 0 && h > 0 && w <= XEMU_LR_MAX_W && h <= XEMU_LR_MAX_H &&
+        ((unsigned)w != fb_w || (unsigned)h != fb_h)) {
+        fb_w = (unsigned)w;
+        fb_h = (unsigned)h;
+        struct retro_game_geometry geom = {
+            .base_width  = fb_w, .base_height = fb_h,
+            .max_width   = XEMU_LR_MAX_W, .max_height = XEMU_LR_MAX_H,
+            .aspect_ratio = (float)fb_w / (float)fb_h,
+        };
+        environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &geom);
+    }
+
+    if (!blit_fbo) {
+        glGenFramebuffers(1, &blit_fbo);
+    }
+
+    /* NV2A surfaces are bottom-up, which is exactly GL's bottom-left
+     * origin: with hw_render.bottom_left_origin set there is no flip. */
+    glDisable(GL_SCISSOR_TEST);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, blit_fbo);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, tex, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER,
+                      (GLuint)hw_render.get_current_framebuffer());
+    glBlitFramebuffer(0, 0, fb_w, fb_h, 0, 0, fb_w, fb_h,
+                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+
     nv2a_release_framebuffer_surface();
 
-    video_cb(fb_pixels, fb_w, fb_h, fb_w * sizeof(uint32_t));
+    video_cb(RETRO_HW_FRAME_BUFFER_VALID, fb_w, fb_h, 0);
 }
 
 /* ========================================================================= */
@@ -388,7 +414,6 @@ RETRO_API void retro_set_input_state(retro_input_state_t cb) { input_state_cb = 
 
 RETRO_API void retro_init(void)
 {
-    fb_pixels = calloc((size_t)XEMU_LR_MAX_W * XEMU_LR_MAX_H, sizeof(uint32_t));
 
     const char *dir = NULL;
     if (environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &dir) && dir) {
@@ -398,8 +423,6 @@ RETRO_API void retro_init(void)
 
 RETRO_API void retro_deinit(void)
 {
-    free(fb_pixels);
-    fb_pixels = NULL;
 }
 
 RETRO_API unsigned retro_api_version(void) { return RETRO_API_VERSION; }
@@ -433,9 +456,22 @@ RETRO_API void retro_set_controller_port_device(unsigned port, unsigned device)
 
 RETRO_API bool retro_load_game(const struct retro_game_info *game)
 {
-    enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
-    if (!environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt)) {
-        log_cb(RETRO_LOG_ERROR, "[xemu] XRGB8888 not supported by frontend\n");
+    /* xemu renders with desktop GL 4.0 core; the frontend owns the
+     * context and tells us via context_reset when it exists. */
+    memset(&hw_render, 0, sizeof(hw_render));
+    hw_render.context_type       = RETRO_HW_CONTEXT_OPENGL_CORE;
+    hw_render.version_major      = 4;
+    hw_render.version_minor      = 0;
+    hw_render.context_reset      = context_reset;
+    hw_render.context_destroy    = context_destroy;
+    hw_render.bottom_left_origin = true;
+    hw_render.depth              = false;
+    hw_render.stencil            = false;
+    hw_render.cache_context      = true;
+    if (!environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render)) {
+        log_cb(RETRO_LOG_ERROR,
+               "[xemu] frontend refused an OpenGL 4.0 core context; "
+               "enable the glcore video driver\n");
         return false;
     }
 
@@ -482,8 +518,17 @@ RETRO_API void retro_run(void)
         return;
     }
 
+    if (!gl_ready) {
+        /* Frontend has not delivered the GL context yet. */
+        video_cb(NULL, fb_w, fb_h, 0);
+        static const int16_t s16sil[2] = { 0, 0 };
+        audio_batch_cb(s16sil, 1);
+        return;
+    }
+
     update_input();
     xemu_lr_vblank();      /* graphic_hw_update under BQL -> new NV2A frame */
+    nv2a_lr_pfifo_pump();  /* pgraph GL work runs HERE, context is current  */
     present_frame();
 
     /* Drain the MCPX APU's ring into the frontend. Cap the burst so a
@@ -518,7 +563,8 @@ RETRO_API void retro_unload_game(void)
      * QEMU thread flags its exit. */
     while (!xemu_lr_is_exiting()) {
         xemu_lr_vblank();
-        if (xemu_lr_make_gl_current()) {
+        nv2a_lr_pfifo_pump();
+        if (gl_ready) {
             (void)nv2a_get_framebuffer_surface();
             nv2a_release_framebuffer_surface();
         }
