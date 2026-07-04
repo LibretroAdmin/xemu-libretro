@@ -167,6 +167,45 @@ static bool configure_and_boot(void)
     build_sys_path(path, sizeof(path), opt("xemu_hdd", "xbox_hdd.qcow2"));
     xemu_settings_set_string(&g_config.sys.files.hdd_path, path);
 
+    /* Upstream deliberately boots a broken machine when firmware files
+     * are missing and reports through the HUD, which does not exist
+     * here -- the result is QEMU's "Failed to load BIOS '(null)'" and a
+     * dead black screen. Validate up front and fail the load with
+     * actionable messages instead. (The EEPROM is intentionally not
+     * checked: vl.c auto-creates it when absent.) */
+    {
+        static const char *what[] = {
+            "MCPX Boot ROM (512 bytes)",
+            "Flash ROM / BIOS",
+            "Hard disk image (a blank one is published as "
+            "xemu-project/xemu-hdd-image)",
+        };
+        const char *paths[] = { g_config.sys.files.bootrom_path,
+                                g_config.sys.files.flashrom_path,
+                                g_config.sys.files.hdd_path };
+        bool ok = true;
+        for (int i = 0; i < 3; i++) {
+            FILE *f = fopen(paths[i], "rb");
+            if (!f) {
+                log_cb(RETRO_LOG_ERROR,
+                       "[xemu] Missing %s: '%s' -- place the file in the "
+                       "frontend system directory (filename configurable "
+                       "via core options).\n", what[i], paths[i]);
+                ok = false;
+            } else {
+                fclose(f);
+            }
+        }
+        if (!ok) {
+            return false;
+        }
+    }
+
+    /* The first-run welcome flow and missing-file paths in vl.c clear
+     * autostart, expecting the HUD to resume the machine -- with the
+     * HUD excluded the VM would sit paused forever. */
+    g_config.general.show_welcome = false;
+
     xemu_settings_set_string(&g_config.sys.files.dvd_path, content_path);
 
     g_config.sys.mem_limit =
