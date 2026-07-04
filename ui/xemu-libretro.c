@@ -92,10 +92,17 @@ static void fallback_log(enum retro_log_level level, const char *fmt, ...)
 /* ========================================================================= */
 
 static const struct retro_variable core_vars[] = {
-    { "xemu_bootrom",    "MCPX boot ROM (system dir); mcpx_1.0.bin" },
-    { "xemu_flashrom",   "Flash ROM / BIOS (system dir); Complex_4627.bin" },
-    { "xemu_eeprom",     "EEPROM image (system dir); xbox_eeprom.bin" },
-    { "xemu_hdd",        "HDD image (system dir); xbox_hdd.qcow2" },
+    { "xemu_bootrom",    "MCPX boot ROM (system dir); "
+                         "mcpx_1.0.bin|mcpx.bin|MCPX_1.0.bin|boot_rom.bin" },
+    { "xemu_flashrom",   "Flash ROM / BIOS (system dir); "
+                         "Complex_4627.bin|Complex_4627_v1.03.bin|"
+                         "complex_4627.bin|cerbios.bin|Cerbios.bin|"
+                         "bios.bin|xbox_bios.bin|Complex.bin" },
+    { "xemu_eeprom",     "EEPROM image (system dir); "
+                         "xbox_eeprom.bin|eeprom.bin|EEPROM.bin" },
+    { "xemu_hdd",        "HDD image (system dir); "
+                         "xbox_hdd.qcow2|xbox_hdd_8gb.qcow2|hdd.qcow2|"
+                         "xbox_hdd.img" },
     { "xemu_memory",     "System memory; 64|128" },
     { "xemu_surface_scale", "Internal render scale; 1|2|3|4" },
     { NULL, NULL }
