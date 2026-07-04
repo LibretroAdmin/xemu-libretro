@@ -93,6 +93,8 @@ static unsigned port_device[4] = {
     RETRO_DEVICE_NONE,   RETRO_DEVICE_NONE,
 };
 static bool ports_dirty;
+static struct retro_rumble_interface rumble_iface;
+static bool rumble_ok;
 
 static void fallback_log(enum retro_log_level level, const char *fmt, ...)
 {
@@ -415,6 +417,25 @@ static void update_pad(int port)
     p->axis[CONTROLLER_AXIS_RSTICK_Y] = (int16_t)
         -pad_axis(port, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y);
     p->last_input_updated_ts = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
+
+    /* Rumble out: the xid device stores the guest's actuator strengths
+     * in the ControllerState from the USB output packet; forward them
+     * on the libretro thread. Duke's left actuator is the heavy motor
+     * (strong), right the light one (weak); both are already 0-65535.
+     * Send on change only. */
+    if (rumble_ok) {
+        static uint16_t last_l[4], last_r[4];
+        if (p->rumble_l != last_l[port]) {
+            rumble_iface.set_rumble_state(port, RETRO_RUMBLE_STRONG,
+                                          p->rumble_l);
+            last_l[port] = p->rumble_l;
+        }
+        if (p->rumble_r != last_r[port]) {
+            rumble_iface.set_rumble_state(port, RETRO_RUMBLE_WEAK,
+                                          p->rumble_r);
+            last_r[port] = p->rumble_r;
+        }
+    }
 }
 
 static void update_input(void)
@@ -689,6 +710,11 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
         { 0, 0, 0, 0, NULL },
     };
     environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void *)desc);
+
+    rumble_ok = environ_cb(RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE,
+                           &rumble_iface) && rumble_iface.set_rumble_state;
+    log_cb(RETRO_LOG_INFO, "[xemu] rumble interface: %s\n",
+           rumble_ok ? "available" : "not provided by frontend");
 
     static const struct retro_controller_description duke_desc[] = {
         { "Xbox Duke Gamepad", RETRO_DEVICE_JOYPAD },
