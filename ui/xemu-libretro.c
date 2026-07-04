@@ -307,6 +307,7 @@ static void do_resume(void)
     bql_unlock();
 
     xemu_lr_audio_reset();
+    xemu_lr_frame_barrier_reset();
     emu_started = true;
     log_cb(RETRO_LOG_INFO, "[xemu] resume: machine running\n");
 }
@@ -796,9 +797,9 @@ RETRO_API void retro_run(void)
     }
 
     update_input();
-    nv2a_lr_pfifo_pump();  /* drain work submitted since last frame        */
-    xemu_lr_vblank();      /* graphic_hw_update under BQL -> new NV2A frame */
-    nv2a_lr_pfifo_pump();  /* drain work the vblank kicked off             */
+    xemu_lr_vblank();      /* vblank IRQ opens the guest's frame           */
+    xemu_lr_run_frame();   /* execute exactly 1/60 s of guest time, sync   */
+    nv2a_lr_pfifo_pump();  /* pgraph GL work the frame produced            */
     present_frame();
 
     /* Drain the MCPX APU's ring into the frontend. Cap the burst so a

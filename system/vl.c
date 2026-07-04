@@ -3097,6 +3097,16 @@ void qemu_init(int argc, char **argv)
     fake_argv[fake_argc++] = strdup("-display");
     fake_argv[fake_argc++] = strdup("xemu");
 
+#ifdef XEMU_LIBRETRO
+    /* Deterministic guest time: icount advances the virtual clock with
+     * instruction execution (TSC-based micro-delays keep working), and
+     * sleep=off removes every realtime alignment. Pacing is then owned
+     * entirely by the frontend: the shim runs the machine exactly one
+     * frame of virtual time per retro_run. No wall clocks anywhere. */
+    fake_argv[fake_argc++] = strdup("-icount");
+    fake_argv[fake_argc++] = strdup("shift=1,sleep=off");
+#endif
+
 
     // Create USB Daughterboard for 1.0 Xbox. This is connected to Port 1 of the Root hub.
     fake_argv[fake_argc++] = strdup("-device");

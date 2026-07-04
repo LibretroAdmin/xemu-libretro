@@ -28,6 +28,10 @@ void xemu_lr_pin_module(void);
 struct Error;
 void xemu_lr_load_disc(const char *path, struct Error **errp);
 
+/* Run exactly one frame of guest virtual time, synchronously. */
+void xemu_lr_run_frame(void);
+void xemu_lr_frame_barrier_reset(void);
+
 /* Empty the audio ring between content sessions. */
 void xemu_lr_audio_reset(void);
 void xemu_lr_display_finalize(void);
