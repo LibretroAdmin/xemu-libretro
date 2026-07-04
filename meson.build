@@ -2443,31 +2443,38 @@ endif
 
 libsamplerate = dependency('samplerate', method: 'pkg-config', required: true)
 
-imgui_proj = subproject('imgui', required: true,
-                         default_options: [
-                           'default_library=static',
-                           'dx9=disabled',
-                           'dx10=disabled',
-                           'dx11=disabled',
-                           'dx12=disabled',
-                           'metal=disabled',
-                           'opengl=enabled',
-                           'sdl2_renderer=disabled',
-                           'sdl3_renderer=disabled',
-                           'vulkan=disabled',
-                           'webgpu=disabled',
-                           'glfw=disabled',
-                           'sdl2=disabled',
-                           'sdl3=enabled',
-                           'osx=disabled',
-                           'win=disabled',
-                           'allegro5=disabled',
-                        ])
-imgui = imgui_proj.get_variable('imgui_dep')
-
-implot_proj = subproject('implot', required: true,
-                         default_options: ['default_library=static'])
-implot = implot_proj.get_variable('implot_dep')
+if get_option('libretro')
+  # No HUD in libretro cores: the frontend owns the UI. Empty deps keep
+  # consumer lists simple.
+  imgui = declare_dependency()
+  implot = declare_dependency()
+else
+  imgui_proj = subproject('imgui', required: true,
+                           default_options: [
+                             'default_library=static',
+                             'dx9=disabled',
+                             'dx10=disabled',
+                             'dx11=disabled',
+                             'dx12=disabled',
+                             'metal=disabled',
+                             'opengl=enabled',
+                             'sdl2_renderer=disabled',
+                             'sdl3_renderer=disabled',
+                             'vulkan=disabled',
+                             'webgpu=disabled',
+                             'glfw=disabled',
+                             'sdl2=disabled',
+                             'sdl3=enabled',
+                             'osx=disabled',
+                             'win=disabled',
+                             'allegro5=disabled',
+                          ])
+  imgui = imgui_proj.get_variable('imgui_dep')
+  
+  implot_proj = subproject('implot', required: true,
+                           default_options: ['default_library=static'])
+  implot = implot_proj.get_variable('implot_dep')
+endif
 
 genconfig_proj = subproject('genconfig', required: true)
 genconfig = genconfig_proj.get_variable('cnode_dep')
