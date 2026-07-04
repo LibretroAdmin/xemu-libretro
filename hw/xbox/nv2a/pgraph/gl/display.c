@@ -388,13 +388,34 @@ void pgraph_gl_sync(NV2AState *d)
     /* Wait for queued commands to complete */
     pgraph_gl_upload_surface_data(d, surface, !tcg_enabled());
     gl_fence();
+#ifdef XEMU_LIBRETRO
+    /* Shared frontend context: report instead of aborting -- the
+     * MSVCRT assert dialog blocks the frontend and hides the enum,
+     * which is the one piece of information that identifies the
+     * clobbered state. */
+    for (GLenum e; (e = glGetError()) != GL_NO_ERROR; ) {
+        static int n; if (n < 120) { n++;
+        fprintf(stderr, "[xemu-lr] sync: GL error 0x%x after surface "
+                "upload (surface %dx%d)\n", e, surface->width,
+                surface->height); }
+    }
+#else
     assert(glGetError() == GL_NO_ERROR);
+#endif
 
     /* Render framebuffer in display context */
     glo_set_current(g_nv2a_context_display);
     render_display(d, surface);
     gl_fence();
+#ifdef XEMU_LIBRETRO
+    for (GLenum e; (e = glGetError()) != GL_NO_ERROR; ) {
+        static int n; if (n < 120) { n++;
+        fprintf(stderr, "[xemu-lr] sync: GL error 0x%x after "
+                "render_display\n", e); }
+    }
+#else
     assert(glGetError() == GL_NO_ERROR);
+#endif
 
     /* Switch back to original context */
     glo_set_current(g_nv2a_context_render);

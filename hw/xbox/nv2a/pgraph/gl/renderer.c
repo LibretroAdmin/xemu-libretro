@@ -115,7 +115,10 @@ void pgraph_gl_lr_frame_begin(NV2AState *d)
     if (!r) {
         return;
     }
-    while (glGetError() != GL_NO_ERROR) {
+    for (GLenum e; (e = glGetError()) != GL_NO_ERROR; ) {
+        static int n; if (n < 120) { n++;
+        fprintf(stderr, "[xemu-lr] frame_begin: frontend left GL error "
+                "0x%x\n", e); }
     }
     r->shader_binding = NULL;
 
@@ -133,6 +136,14 @@ void pgraph_gl_lr_frame_begin(NV2AState *d)
      * uses samplers, so unbind them from the units it draws with. */
     for (int i = 0; i < 16; i++) {
         glBindSampler(i, 0);
+    }
+
+    /* Self-check: if the unbinds above raised anything on this driver,
+     * say so instead of letting it surface at the next pgraph call. */
+    for (GLenum e; (e = glGetError()) != GL_NO_ERROR; ) {
+        static int n; if (n < 120) { n++;
+        fprintf(stderr, "[xemu-lr] frame_begin: our state reset raised "
+                "GL error 0x%x\n", e); }
     }
 }
 #endif
