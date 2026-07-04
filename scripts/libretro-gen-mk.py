@@ -185,7 +185,7 @@ def main():
               '\t$(file >$@.rsp,$^)\n'
               # native Windows ar reads the rsp verbatim: MSYS /c/ drive
               # paths must become c:/ (POSIX paths are left untouched)
-              '\t$(Q)sed -E -i ' + r"'s#(^| |@|=)/([A-Za-z])/#\1\2:/#g'" + ' $@.rsp\n'
+              '\t$(Q)sed -E -i ' + r"'s#(^| |@|=|-L|-I)/([A-Za-z])/#\1\2:/#g'" + ' $@.rsp\n'
               '\t$(Q)$(AR) rcs $@ @$@.rsp\n\n')
         w('LINK_ARCHIVES := %s\n\n' %
           ' '.join('$(B)/' + rel for rel, _ in archives))

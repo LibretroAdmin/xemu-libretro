@@ -80,7 +80,11 @@ all: $(TARGET)
 # own, and under parallel make (-j) dependency resolution races ahead
 # of any seed recipe. Copying here guarantees every $(B)-rooted
 # prerequisite exists before make resolves a single dependency.
-SEED := $(shell test -f $(B)/.pregen.stamp || \
+# Re-seed whenever pregen content is newer than the stamp (e.g. a git
+# pull added or updated pregenerated files after the build dir was
+# first created), not only when the stamp is missing.
+SEED := $(shell { test -f $(B)/.pregen.stamp && \
+          test -z "$$(find $(PREGEN) -newer $(B)/.pregen.stamp -print -quit)"; } || \
         { mkdir -p $(B) && cp -rp $(PREGEN)/. $(B)/ && \
           touch $(B)/.pregen.stamp; } && echo ok)
 ifneq ($(SEED),ok)
@@ -96,7 +100,7 @@ RSP := $(B)/$(TARGET).rsp
 $(TARGET): $(LINK_OBJS) $(LINK_ARCHIVES)
 	$(E) "RSP     $(notdir $(RSP))"
 	$(file >$(RSP),$(LINK_OBJS) $(DEP_LDFLAGS) $(LINK_TAIL) $(EXTRA_LIBS))
-	$(Q)sed -E -i 's#(^| |@|=)/([A-Za-z])/#\1\2:/#g' $(RSP)
+	$(Q)sed -E -i 's#(^| |@|=|-L|-I)/([A-Za-z])/#\1\2:/#g' $(RSP)
 	$(E) "LINK    $@"
 	$(Q)cd $(B) && $(CXX) -m64 -static-libgcc -static-libstdc++ -o $(S)/$@ @$(RSP)
 	$(E) "OK      $@"
