@@ -279,7 +279,27 @@ static void nv2a_lock_fifo(NV2AState *d)
     qemu_mutex_lock(&d->pfifo.lock);
     qemu_cond_broadcast(&d->pfifo.fifo_cond);
     bql_unlock();
+#ifdef XEMU_LIBRETRO
+    /* The idle broadcast comes only from the pfifo pump. During
+     * teardown there is a window after the pump stops (retro thread
+     * observed the exiting flag) and before pause_all_vcpus parks the
+     * guest: a vCPU still executing NV2A MMIO lands here and waits
+     * forever. Idle guests never hit it; a game rendering every frame
+     * almost surely does. Poll with a bound and give up on the idle
+     * guarantee once the core is exiting -- the machine is being torn
+     * down and nothing downstream of this wait matters anymore. */
+    {
+        extern bool xemu_lr_is_exiting(void);
+        while (!xemu_lr_is_exiting()) {
+            if (qemu_cond_timedwait(&d->pfifo.fifo_idle_cond,
+                                    &d->pfifo.lock, 10)) {
+                break;
+            }
+        }
+    }
+#else
     qemu_cond_wait(&d->pfifo.fifo_idle_cond, &d->pfifo.lock);
+#endif
     bql_lock();
     qemu_mutex_lock(&d->pgraph.lock);
 }
