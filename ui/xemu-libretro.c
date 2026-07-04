@@ -501,8 +501,24 @@ RETRO_API void retro_unload_game(void)
     qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_UI);
     xemu_lr_unlock_main_loop();
 
-    /* qemu_main_thread: main loop exits -> waits for display shutdown. */
-    xemu_lr_set_exiting(true);
+    /* Upstream's main thread keeps pumping vblanks in a
+     * while (!qemu_exiting) loop through the whole shutdown: the NV2A
+     * render thread stalls on flip (pgraph_gl_flip_stall) until the
+     * presenter services the frame, and a stalled flip wedges the vCPU
+     * mid-MMIO so qemu_main_loop() can never quiesce. Stop pumping too
+     * early and qemu_thread_join() below hangs the frontend forever --
+     * exactly what happened on the first in-frontend content close.
+     * Pump vblank plus the framebuffer get/release handshake until the
+     * QEMU thread flags its exit. */
+    while (!xemu_lr_is_exiting()) {
+        xemu_lr_vblank();
+        if (xemu_lr_make_gl_current()) {
+            (void)nv2a_get_framebuffer_surface();
+            nv2a_release_framebuffer_surface();
+        }
+        SDL_Delay(4);
+    }
+
     xemu_lr_signal_display_shutdown();
     qemu_thread_join(&qemu_thread);
     xemu_lr_display_finalize();
