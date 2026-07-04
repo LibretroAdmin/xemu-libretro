@@ -118,6 +118,15 @@ void pgraph_gl_lr_frame_begin(NV2AState *d)
     while (glGetError() != GL_NO_ERROR) {
     }
     r->shader_binding = NULL;
+
+    /* xemu assumes no pixel buffer is ever bound: with a frontend PBO
+     * left on GL_PIXEL_UNPACK_BUFFER, every client-pointer
+     * glTexSubImage becomes an offset into the frontend's buffer
+     * (GL_INVALID_OPERATION in upload_surface_data, black display).
+     * The pack side likewise poisons readbacks. xemu manages the rest
+     * of the pixel-store state around its own uploads. */
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 }
 #endif
 
