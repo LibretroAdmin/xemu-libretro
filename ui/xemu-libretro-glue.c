@@ -170,6 +170,7 @@ void xemu_lr_vblank(void)
         return;
     }
     xemu_main_loop_lock();
+    xemu_lr_vclock_advance();
     graphic_hw_update(lr_con.dcl.con);
     xemu_main_loop_unlock();
 }
@@ -269,6 +270,31 @@ void xemu_lr_load_disc(const char *path, Error **errp)
         error_propagate(errp, error);
     }
     xbox_smc_update_tray_state();
+}
+
+/* --------------------------------------------------------------------- */
+/* Retro-quantized virtual clock. Under TCG without icount, the virtual  */
+/* clock (and through it the TSC, ACPI PM timer, APIC timer, and every   */
+/* virtual-clock timer the guest's frame limiter leans on) is wall time. */
+/* Frame delivery, meanwhile, is paced by retro_run. Two unlocked clocks */
+/* is the jerkiness: the guest's wall-based limiter periodically overruns */
+/* the vsync-paced vblank and drops a flip. Hooking the accel's clock    */
+/* source (the same seam icount uses) locks guest time to retro_run:     */
+/* exactly one frame period per call, deterministic, pause-correct.      */
+/* --------------------------------------------------------------------- */
+
+static int64_t lr_vclock_ns;
+
+int64_t xemu_lr_vclock_get(void)
+{
+    return qatomic_read_i64(&lr_vclock_ns);
+}
+
+void xemu_lr_vclock_advance(void)
+{
+    qatomic_set_i64(&lr_vclock_ns,
+                    qatomic_read_i64(&lr_vclock_ns) + 16666667 /* 1/60 s */);
+    qemu_clock_notify(QEMU_CLOCK_VIRTUAL);
 }
 
 void xemu_lr_audio_reset(void)
