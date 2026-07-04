@@ -63,6 +63,10 @@ DEP_CFLAGS  := -I$(DEPS)/include \
                -I$(DEPS)/lib/glib-2.0/include \
                -I$(DEPS)/include/slirp \
                -DGLIB_STATIC_COMPILATION -DPCRE2_STATIC -DLIBSLIRP_STATIC
+# None of the dependency checks or build-tree seeding below matter for
+# cleaning; make clean must work on any checkout, however broken.
+ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
+
 # Vendored libraries are linked by explicit archive path (substituted
 # into the link rsp below) -- there is no -L/-l resolution to go wrong,
 # and a missing file is diagnosed here by name at parse time instead of
@@ -106,6 +110,8 @@ SEED := $(shell { test -f $(B)/.pregen.stamp && \
 ifneq ($(SEED),ok)
 $(error failed to seed $(B) from $(PREGEN))
 endif
+
+endif # not cleaning
 
 include $(S)/libretro/mk/sources_win64.mk
 
