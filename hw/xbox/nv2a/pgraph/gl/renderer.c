@@ -131,7 +131,18 @@ void pgraph_gl_lr_frame_begin(NV2AState *d)
         fprintf(stderr, "[xemu-lr] frame_begin: frontend left GL error "
                 "0x%x\n", e); }
     }
-    r->shader_binding = NULL;
+    /* Do NOT null r->shader_binding: pgraph draw state legitimately
+     * spans retro_run boundaries when the pump's budget expires
+     * mid-draw (a begin/end pair split across frames -- constant under
+     * fast-forward), and the draw path asserts the binding it
+     * established at begin time. The pointer is pgraph's logical
+     * state; only the GL program binding is the frontend's to clobber.
+     * Re-issue it instead. */
+    if (r->shader_binding) {
+        glUseProgram(r->shader_binding->gl_program);
+    } else {
+        glUseProgram(0);
+    }
 
     /* pgraph binds its framebuffer through bind_current_surface and
      * assumes the binding persists: when the render target is
