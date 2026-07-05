@@ -34,7 +34,6 @@
 #include "hw/xbox/smbus.h"
 #include "qapi/qapi-commands-block.h"
 #include "system/runstate.h"
-#include "system/cpus.h"
 #include "xemu-libretro-glue.h"
 
 static QemuSemaphore display_init_sem;
@@ -270,59 +269,6 @@ void xemu_lr_load_disc(const char *path, Error **errp)
         error_propagate(errp, error);
     }
     xbox_smc_update_tray_state();
-}
-
-/* --------------------------------------------------------------------- */
-/* Synchronous frame execution under icount: run the machine exactly one */
-/* frame of virtual time per call, then hold it paused. This is the      */
-/* normal-core contract -- retro_run performs one frame of emulation and */
-/* returns when it is done. icount guarantees the vCPU stops precisely   */
-/* at the deadline (the instruction budget is computed from it), and     */
-/* sleep=off warps idle time straight to the deadline.                   */
-/* --------------------------------------------------------------------- */
-
-#define LR_FRAME_NS 16666667 /* 1/60 s, matches declared av_info timing */
-
-static QEMUTimer *lr_frame_timer;
-static QemuEvent  lr_frame_done;
-static bool       lr_frame_inited;
-
-static void lr_frame_cb(void *opaque)
-{
-    (void)opaque;
-    pause_all_vcpus();
-    qemu_event_set(&lr_frame_done);
-}
-
-void xemu_lr_run_frame(void)
-{
-    if (!lr_frame_inited) {
-        qemu_event_init(&lr_frame_done, false);
-        bql_lock();
-        lr_frame_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, lr_frame_cb, NULL);
-        /* The machine ran unpaced through boot; take ownership. */
-        pause_all_vcpus();
-        bql_unlock();
-        lr_frame_inited = true;
-    }
-
-    qemu_event_reset(&lr_frame_done);
-    bql_lock();
-    timer_mod_ns(lr_frame_timer,
-                 qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + LR_FRAME_NS);
-    resume_all_vcpus();
-    bql_unlock();
-    qemu_event_wait(&lr_frame_done);
-}
-
-void xemu_lr_frame_barrier_reset(void)
-{
-    /* Resident-session resume re-owns pacing on the next frame. */
-    if (lr_frame_inited) {
-        bql_lock();
-        timer_del(lr_frame_timer);
-        bql_unlock();
-    }
 }
 
 void xemu_lr_audio_reset(void)
