@@ -28,6 +28,10 @@ void xemu_lr_pin_module(void);
 struct Error;
 void xemu_lr_load_disc(const char *path, struct Error **errp);
 
+/* Servo-locked continuous guest clock (see glue). */
+int64_t xemu_lr_paced_clock(void);
+void xemu_lr_pace_frame(void);
+
 /* Empty the audio ring between content sessions. */
 void xemu_lr_audio_reset(void);
 void xemu_lr_display_finalize(void);

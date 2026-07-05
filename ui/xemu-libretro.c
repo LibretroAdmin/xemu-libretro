@@ -796,6 +796,7 @@ RETRO_API void retro_run(void)
     }
 
     update_input();
+    xemu_lr_pace_frame();  /* servo the guest clock onto frame count       */
     nv2a_lr_pfifo_pump();  /* drain work submitted since last frame        */
     xemu_lr_vblank();      /* graphic_hw_update under BQL -> new NV2A frame */
     nv2a_lr_pfifo_pump();  /* drain work the vblank kicked off             */

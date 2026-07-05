@@ -219,6 +219,20 @@ static void tcg_accel_ops_init(AccelClass *ac)
         }
     }
 
+#ifdef XEMU_LIBRETRO
+    /* Guest time is a servo-locked continuous clock: host-monotonic
+     * base with a gently trimmed rate, converged by the shim on
+     * frames_delivered * (1/60 s). Continuous within a frame (TSC
+     * micro-delays behave), agreeing with the vblank cadence over any
+     * window (no wall-vs-vsync beat), and free of icount's execution
+     * cost. */
+    {
+        extern int64_t xemu_lr_paced_clock(void);
+        ops->get_virtual_clock = xemu_lr_paced_clock;
+        ops->get_elapsed_ticks = xemu_lr_paced_clock;
+    }
+#endif
+
     ops->cpu_reset_hold = tcg_cpu_reset_hold;
     ops->supports_guest_debug = tcg_supports_guest_debug;
     ops->insert_breakpoint = tcg_insert_breakpoint;

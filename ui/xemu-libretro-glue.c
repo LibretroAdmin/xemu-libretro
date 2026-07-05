@@ -34,6 +34,8 @@
 #include "hw/xbox/smbus.h"
 #include "qapi/qapi-commands-block.h"
 #include "system/runstate.h"
+#include "qemu/seqlock.h"
+#include "qemu/timer.h"
 #include "xemu-libretro-glue.h"
 
 static QemuSemaphore display_init_sem;
@@ -269,6 +271,103 @@ void xemu_lr_load_disc(const char *path, Error **errp)
         error_propagate(errp, error);
     }
     xbox_smc_update_tray_state();
+}
+
+/* --------------------------------------------------------------------- */
+/* Servo-locked guest clock. The guest runs free (plain TCG, own        */
+/* thread), but its virtual clock -- and through it the TSC and every   */
+/* timer a frame limiter can read -- is a continuous function of the    */
+/* host monotonic clock with a gently trimmed rate (+-2%), servoed so   */
+/* that virtual time converges on frames_delivered * (1/60 s).          */
+/* Time always flows at ~1.0x within any frame, so microsecond          */
+/* spin-delays behave; over any window, guest time and the vblank       */
+/* cadence agree, so wall-vs-vsync beat cannot exist. Pause and         */
+/* fast-forward produce a bounded step (hard rebase) instead of servo   */
+/* windup, matching classic emulator semantics.                         */
+/* --------------------------------------------------------------------- */
+
+#define LR_PACE_FRAME_NS   16666667LL
+#define LR_PACE_MAX_TRIM   120000    /* +-12%: guest speed tracks the
+                                        frontend call rate, like any core */
+#define LR_PACE_REBASE_NS  100000000LL /* >100 ms off: step, don't servo */
+
+static struct {
+    QemuSeqLock lock;
+    int64_t base_v;      /* virtual ns at rebase point                  */
+    int64_t base_w;      /* host ns at rebase point                     */
+    int64_t rate_ppm;    /* 1e6 = realtime                              */
+    int64_t epoch_v;     /* virtual ns at first paced frame             */
+    int64_t frames;
+    bool    engaged;
+} lr_pace = { .rate_ppm = 1000000 };
+
+static int64_t lr_pace_read(void)
+{
+    unsigned start;
+    int64_t v;
+    do {
+        start = seqlock_read_begin(&lr_pace.lock);
+        int64_t w = get_clock();
+        v = lr_pace.base_v +
+            muldiv64(w - lr_pace.base_w, lr_pace.rate_ppm, 1000000);
+    } while (seqlock_read_retry(&lr_pace.lock, start));
+    return v;
+}
+
+int64_t xemu_lr_paced_clock(void)
+{
+    return lr_pace_read();
+}
+
+/* Called once per retro_run, single writer. */
+void xemu_lr_pace_frame(void)
+{
+    int64_t vnow = lr_pace_read();
+    int64_t wnow = get_clock();
+
+    if (!lr_pace.engaged) {
+        lr_pace.epoch_v = vnow;
+        lr_pace.frames = 0;
+        lr_pace.engaged = true;
+    }
+    lr_pace.frames++;
+    int64_t target = lr_pace.epoch_v + lr_pace.frames * LR_PACE_FRAME_NS;
+    int64_t err = vnow - target;   /* + = guest clock ahead of frames  */
+
+    int64_t rate;
+    int64_t new_base_v = vnow;
+    if (err > LR_PACE_REBASE_NS) {
+        /* Fast-forward raced the frame count ahead of the clock: step
+         * guest time forward once (classic FF semantics). */
+        new_base_v = target;
+        rate = 1000000;
+    } else if (err < -LR_PACE_REBASE_NS) {
+        /* The frontend fell far behind (pause, heavy stall): forgive
+         * the missed frames by re-anchoring the epoch. Guest time
+         * must never step backward. */
+        lr_pace.epoch_v = vnow - lr_pace.frames * LR_PACE_FRAME_NS;
+        rate = 1000000;
+    } else {
+        /* Proportional trim: a full-frame error corrects in ~1 s. */
+        rate = 1000000 - err / 833;
+        if (rate > 1000000 + LR_PACE_MAX_TRIM) rate = 1000000 + LR_PACE_MAX_TRIM;
+        if (rate < 1000000 - LR_PACE_MAX_TRIM) rate = 1000000 - LR_PACE_MAX_TRIM;
+    }
+
+    seqlock_write_begin(&lr_pace.lock);
+    lr_pace.base_v = new_base_v;
+    lr_pace.base_w = wnow;
+    lr_pace.rate_ppm = rate;
+    seqlock_write_end(&lr_pace.lock);
+
+    static int64_t worst_err; static unsigned n;
+    int64_t aerr = err < 0 ? -err : err;
+    if (aerr > worst_err) worst_err = aerr;
+    if (++n % 3600 == 0) {
+        fprintf(stderr, "[xemu-lr] pace: worst clock-vs-frames error "
+                "%lld ns over last 3600 frames\n", (long long)worst_err);
+        worst_err = 0;
+    }
 }
 
 void xemu_lr_audio_reset(void)
